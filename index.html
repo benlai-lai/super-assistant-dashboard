@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>超級隨身助理</title>
+<style>
+:root{
+  --bg:#f4f7fb; --panel:#fff; --text:#17233b; --muted:#6d7890;
+  --line:#e4eaf2; --blue:#246bfd; --nav:#0d2340; --green:#24a46d;
+  --orange:#f59e0b; --red:#ef5350; --purple:#7c5cff;
+  --shadow:0 10px 28px rgba(21,42,79,.08); --radius:18px;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI","Noto Sans TC",sans-serif;background:var(--bg);color:var(--text)}
+button{font:inherit}
+.app{display:grid;grid-template-columns:220px 1fr;min-height:100vh}
+.sidebar{background:var(--nav);color:white;padding:22px 16px;display:flex;flex-direction:column;gap:20px}
+.brand{font-size:20px;font-weight:800;padding:8px 10px}
+.brand small{display:block;font-size:12px;font-weight:500;opacity:.65;margin-top:4px}
+.nav{display:grid;gap:8px}
+.nav button{border:0;background:transparent;color:#dfe8f4;text-align:left;padding:12px 14px;border-radius:12px;cursor:pointer}
+.nav button.active,.nav button:hover{background:#174783;color:white}
+.profile{margin-top:auto;border-top:1px solid rgba(255,255,255,.12);padding:18px 8px 4px;font-size:14px}
+.main{padding:24px}
+.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.title h1{font-size:26px;margin:0}.title p{margin:5px 0 0;color:var(--muted)}
+.actions{display:flex;gap:10px;align-items:center}
+.btn{border:1px solid var(--line);background:white;border-radius:12px;padding:10px 14px;cursor:pointer}
+.btn.primary{background:var(--blue);color:white;border-color:var(--blue)}
+.grid{display:grid;gap:16px}
+.kpis{grid-template-columns:repeat(5,minmax(0,1fr));margin-bottom:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px}
+.kpi .label{color:var(--muted);font-size:13px}.kpi .value{font-size:30px;font-weight:800;margin:8px 0 4px}.kpi .note{font-size:12px;color:var(--muted)}
+.content{grid-template-columns:1.15fr .9fr 1.15fr}
+.bottom{grid-template-columns:1.05fr .85fr .8fr}
+.card h2{font-size:17px;margin:0 0 16px}
+.timeline{display:grid;gap:14px}
+.event{display:grid;grid-template-columns:58px 12px 1fr;gap:10px;align-items:start}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--blue);margin-top:5px}
+.event strong{display:block}.event small{color:var(--muted)}
+.progress-list{display:grid;gap:15px}.progress-row{display:grid;grid-template-columns:1fr 70px;gap:12px}
+.bar{height:8px;background:#edf1f6;border-radius:999px;overflow:hidden;margin-top:7px}.fill{height:100%;background:var(--blue)}
+.status-list{display:grid;gap:12px}.status{display:flex;justify-content:space-between;align-items:center;padding:12px;border:1px solid var(--line);border-radius:12px}
+.badge{font-size:12px;padding:5px 9px;border-radius:999px;background:#edf4ff;color:var(--blue)}
+.badge.green{background:#eaf8f2;color:var(--green)}.badge.orange{background:#fff6df;color:#a86d00}.badge.red{background:#fff0ef;color:var(--red)}
+.focus{border-left:4px solid var(--blue);padding-left:14px;margin-bottom:14px}.focus strong{display:block}.focus small{color:var(--muted)}
+.calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:7px;font-size:12px;text-align:center}
+.calendar span{padding:6px 0;border-radius:8px}.calendar .head{font-weight:700;color:var(--muted)}.calendar .today{background:var(--blue);color:white}
+.fab{display:none}
+.mobile-nav{display:none}
+@media(max-width:1000px){
+ .kpis{grid-template-columns:repeat(2,1fr)}
+ .content,.bottom{grid-template-columns:1fr}
+}
+@media(max-width:768px){
+ .app{display:block}.sidebar{display:none}.main{padding:16px 14px 88px}
+ .topbar{align-items:flex-start}.title h1{font-size:22px}.actions .btn:not(.primary){display:none}
+ .kpis{grid-template-columns:repeat(2,1fr);gap:10px}.card{padding:15px;border-radius:16px}.kpi .value{font-size:25px}
+ .content,.bottom{grid-template-columns:1fr}.hide-mobile{display:none}
+ .mobile-nav{display:grid;position:fixed;bottom:0;left:0;right:0;grid-template-columns:repeat(5,1fr);background:white;border-top:1px solid var(--line);padding:9px 4px calc(9px + env(safe-area-inset-bottom));z-index:20}
+ .mobile-nav button{border:0;background:white;color:var(--muted);font-size:11px}.mobile-nav .active{color:var(--blue);font-weight:800}
+ .fab{display:block;position:fixed;right:18px;bottom:78px;width:54px;height:54px;border-radius:50%;border:0;background:var(--blue);color:white;font-size:28px;box-shadow:0 12px 24px rgba(36,107,253,.35);z-index:21}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">超級隨身助理<small>Personal Command Center</small></div>
+    <nav class="nav">
+      <button class="active">總覽</button><button>日曆</button><button>任務</button>
+      <button>專案</button><button>Inbox</button><button>報表</button><button>設定</button>
+    </nav>
+    <div class="profile">Andy<br><small style="opacity:.65">管理者</small></div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="title"><h1>早安，Andy</h1><p>今天先處理最重要的事，不必把全部工作背在腦中。</p></div>
+      <div class="actions"><button class="btn">本週</button><button class="btn primary" onclick="addItem()">＋ 快速新增</button></div>
+    </header>
+
+    <section class="grid kpis">
+      <div class="card kpi"><div class="label">今日任務</div><div class="value">8</div><div class="note">最重要 3 項</div></div>
+      <div class="card kpi"><div class="label">已完成</div><div class="value">3</div><div class="note">今日完成率 38%</div></div>
+      <div class="card kpi"><div class="label">進行中</div><div class="value">4</div><div class="note">1 項等待回覆</div></div>
+      <div class="card kpi"><div class="label">等待決策</div><div class="value">2</div><div class="note">需要你確認</div></div>
+      <div class="card kpi hide-mobile"><div class="label">逾期</div><div class="value">1</div><div class="note">建議今天處理</div></div>
+    </section>
+
+    <section class="grid content">
+      <div class="card">
+        <h2>今天最重要的三件事</h2>
+        <div class="focus"><strong>確認超級隨身助理第一版介面</strong><small>等待你的設計決策</small></div>
+        <div class="focus"><strong>準備台北郵局拜訪資料</strong><small>產品、公司 DM、合約書</small></div>
+        <div class="focus"><strong>整理 AI Sales OS 下一階段</strong><small>定義 Codex 執行範圍</small></div>
+      </div>
+
+      <div class="card">
+        <h2>今日行程</h2>
+        <div class="timeline">
+          <div class="event"><b>09:00</b><i class="dot"></i><div><strong>整理拜訪資料</strong><small>30 分鐘</small></div></div>
+          <div class="event"><b>10:00</b><i class="dot" style="background:var(--green)"></i><div><strong>台北郵局會議</strong><small>台北</small></div></div>
+          <div class="event"><b>14:00</b><i class="dot" style="background:var(--orange)"></i><div><strong>專案進度檢視</strong><small>線上</small></div></div>
+          <div class="event"><b>17:00</b><i class="dot" style="background:var(--purple)"></i><div><strong>今日收尾</strong><small>確認完成與延後事項</small></div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>專案進度概覽</h2>
+        <div class="progress-list">
+          <div class="progress-row"><div>超級隨身助理<div class="bar"><div class="fill" style="width:35%"></div></div></div><b>35%</b></div>
+          <div class="progress-row"><div>AI Sales OS<div class="bar"><div class="fill" style="width:72%;background:var(--green)"></div></div></div><b>72%</b></div>
+          <div class="progress-row"><div>BagKing 網站<div class="bar"><div class="fill" style="width:58%;background:var(--orange)"></div></div></div><b>58%</b></div>
+          <div class="progress-row"><div>產品資料整理<div class="bar"><div class="fill" style="width:84%;background:var(--purple)"></div></div></div><b>84%</b></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid bottom" style="margin-top:16px">
+      <div class="card">
+        <h2>等待你決策</h2>
+        <div class="status-list">
+          <div class="status"><span>Dashboard 首頁資訊順序</span><span class="badge">待確認</span></div>
+          <div class="status"><span>是否第一階段加入提醒功能</span><span class="badge orange">稍後決定</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>即將到期</h2>
+        <div class="status-list">
+          <div class="status"><span>台北郵局會議資料</span><span class="badge red">明天</span></div>
+          <div class="status"><span>第一版規格確認</span><span class="badge green">本週</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>本月</h2>
+        <div class="calendar">
+          <span class="head">日</span><span class="head">一</span><span class="head">二</span><span class="head">三</span><span class="head">四</span><span class="head">五</span><span class="head">六</span>
+          <span>19</span><span>20</span><span>21</span><span class="today">22</span><span>23</span><span>24</span><span>25</span>
+          <span>26</span><span>27</span><span>28</span><span>29</span><span>30</span><span>31</span><span>1</span>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<button class="fab" onclick="addItem()">＋</button>
+<nav class="mobile-nav">
+  <button class="active">總覽</button><button>日曆</button><button>任務</button><button>專案</button><button>更多</button>
+</nav>
+<script>
+function addItem(){
+  const text = prompt("請用自然語言輸入一件事，例如：明天十點去台北郵局開會");
+  if(text) alert("已收到：\\n" + text + "\\n\\n第一版原型目前只示範輸入流程，尚未寫入資料庫。");
+}
+</script>
+</body>
+</html>
