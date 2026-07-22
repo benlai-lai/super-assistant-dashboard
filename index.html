@@ -4,69 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>超級隨身助理</title>
-<style>
-:root{
-  --bg:#f4f7fb; --panel:#fff; --text:#17233b; --muted:#6d7890;
-  --line:#e4eaf2; --blue:#246bfd; --nav:#0d2340; --green:#24a46d;
-  --orange:#f59e0b; --red:#ef5350; --purple:#7c5cff;
-  --shadow:0 10px 28px rgba(21,42,79,.08); --radius:18px;
-}
-*{box-sizing:border-box}
-body{margin:0;font-family:system-ui,-apple-system,"Segoe UI","Noto Sans TC",sans-serif;background:var(--bg);color:var(--text)}
-button{font:inherit}
-.app{display:grid;grid-template-columns:220px 1fr;min-height:100vh}
-.sidebar{background:var(--nav);color:white;padding:22px 16px;display:flex;flex-direction:column;gap:20px}
-.brand{font-size:20px;font-weight:800;padding:8px 10px}
-.brand small{display:block;font-size:12px;font-weight:500;opacity:.65;margin-top:4px}
-.nav{display:grid;gap:8px}
-.nav button{border:0;background:transparent;color:#dfe8f4;text-align:left;padding:12px 14px;border-radius:12px;cursor:pointer;font-size:14px}
-.nav button.active,.nav button:hover{background:#174783;color:white}
-.profile{margin-top:auto;border-top:1px solid rgba(255,255,255,.12);padding:18px 8px 4px;font-size:14px}
-.main{padding:24px}
-.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
-.title h1{font-size:26px;margin:0}.title p{margin:5px 0 0;color:var(--muted)}
-.actions{display:flex;gap:10px;align-items:center}
-.btn{border:1px solid var(--line);background:white;border-radius:12px;padding:10px 14px;cursor:pointer;font-size:14px}
-.btn:hover{background:#f9f9f9}
-.btn.primary{background:var(--blue);color:white;border-color:var(--blue)}
-.btn.primary:hover{background:#1d54d0}
-.grid{display:grid;gap:16px}
-.kpis{grid-template-columns:repeat(5,minmax(0,1fr));margin-bottom:16px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px}
-.kpi .label{color:var(--muted);font-size:13px}.kpi .value{font-size:30px;font-weight:800;margin:8px 0 4px}.kpi .note{font-size:12px;color:var(--muted)}
-.content{grid-template-columns:1.15fr .9fr 1.15fr}
-.bottom{grid-template-columns:1.05fr .85fr .8fr}
-.card h2{font-size:17px;margin:0 0 16px}
-.timeline{display:grid;gap:14px}
-.event{display:grid;grid-template-columns:58px 12px 1fr;gap:10px;align-items:start}
-.dot{width:10px;height:10px;border-radius:50%;background:var(--blue);margin-top:5px}
-.event strong{display:block}.event small{color:var(--muted)}
-.progress-list{display:grid;gap:15px}.progress-row{display:grid;grid-template-columns:1fr 70px;gap:12px}
-.bar{height:8px;background:#edf1f6;border-radius:999px;overflow:hidden;margin-top:7px}.fill{height:100%;background:var(--blue)}
-.status-list{display:grid;gap:12px}.status{display:flex;justify-content:space-between;align-items:center;padding:12px;border:1px solid var(--line);border-radius:12px}
-.badge{font-size:12px;padding:5px 9px;border-radius:999px;background:#edf4ff;color:var(--blue)}
-.badge.green{background:#eaf8f2;color:var(--green)}.badge.orange{background:#fff6df;color:#a86d00}.badge.red{background:#fff0ef;color:var(--red)}
-.focus{border-left:4px solid var(--blue);padding-left:14px;margin-bottom:14px}.focus strong{display:block}.focus small{color:var(--muted)}
-.calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:7px;font-size:12px;text-align:center}
-.calendar span{padding:6px 0;border-radius:8px;cursor:pointer}.calendar .head{font-weight:700;color:var(--muted);cursor:default}.calendar .today{background:var(--blue);color:white}.calendar .has-event{font-weight:700;color:var(--blue)}.calendar .selected{background:var(--blue);color:white}.calendar .other-month{color:var(--muted);opacity:.5}
-.task-list{display:grid;gap:12px}
-.task-item{padding:12px;border:1px solid var(--line);border-radius:12px}
-.fab{display:none}
-.mobile-nav{display:none}
-@media(max-width:1000px){
- .kpis{grid-template-columns:repeat(2,1fr)}
- .content,.bottom{grid-template-columns:1fr}
-}
-@media(max-width:768px){
- .app{display:block}.sidebar{display:none}.main{padding:16px 14px 88px}
- .topbar{align-items:flex-start}.title h1{font-size:22px}.actions .btn:not(.primary){display:none}
- .kpis{grid-template-columns:repeat(2,1fr);gap:10px}.card{padding:15px;border-radius:16px}.kpi .value{font-size:25px}
- .content,.bottom{grid-template-columns:1fr}.hide-mobile{display:none}
- .mobile-nav{display:grid;position:fixed;bottom:0;left:0;right:0;grid-template-columns:repeat(5,1fr);background:white;border-top:1px solid var(--line);padding:9px 4px calc(9px + env(safe-area-inset-bottom, 0px));z-index:999}
- .mobile-nav button{border:0;background:white;color:var(--muted);font-size:11px;padding:8px 4px;cursor:pointer}.mobile-nav .active{color:var(--blue);font-weight:800}
- .fab{display:block;position:fixed;right:18px;bottom:78px;width:54px;height:54px;border-radius:50%;border:0;background:var(--blue);color:white;font-size:28px;box-shadow:0 12px 24px rgba(36,107,253,.3);cursor:pointer;z-index:998}
-}
-</style>
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <div class="app">
