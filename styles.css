@@ -1,4 +1,4 @@
-/* 超級隨身助理 Dashboard V1 - 全局樣式 */
+/* 超級隨身助理 Dashboard V1.1 - UX 優化版本 */
 
 :root {
   --bg: #f4f7fb;
@@ -66,7 +66,7 @@ button {
 /* 導覽菜單 */
 .nav {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .nav button {
@@ -74,7 +74,7 @@ button {
   background: transparent;
   color: #dfe8f4;
   text-align: left;
-  padding: 12px 14px;
+  padding: 10px 14px;
   border-radius: 12px;
   cursor: pointer;
   font-size: 14px;
@@ -85,6 +85,7 @@ button {
 .nav button:hover {
   background: #174783;
   color: white;
+  font-weight: 600;
 }
 
 .profile {
@@ -108,13 +109,27 @@ button {
 }
 
 .title h1 {
-  font-size: 26px;
+  font-size: 28px;
   margin: 0;
+  font-weight: 800;
 }
 
 .title p {
   margin: 5px 0 0;
   color: var(--muted);
+  font-size: 14px;
+}
+
+.header-stats {
+  display: flex;
+  gap: 16px;
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.header-stats .stat {
+  color: var(--text);
+  font-weight: 600;
 }
 
 /* 按鈕樣式 */
@@ -170,31 +185,35 @@ button {
 
 .kpi .label {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .kpi .value {
-  font-size: 30px;
+  font-size: 42px;
   font-weight: 800;
   margin: 8px 0 4px;
+  line-height: 1;
 }
 
 .kpi .note {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
+  margin-top: 4px;
 }
 
 .content {
-  grid-template-columns: 1.15fr 0.9fr 1.15fr;
+  grid-template-columns: 1.2fr 1fr 1.2fr;
 }
 
 .bottom {
-  grid-template-columns: 1.05fr 0.85fr 0.8fr;
+  grid-template-columns: 1.1fr 0.9fr 0.85fr;
 }
 
 .card h2 {
-  font-size: 17px;
-  margin: 0 0 16px;
+  font-size: 16px;
+  margin: 0 0 14px;
+  font-weight: 700;
 }
 
 .card h3 {
@@ -202,53 +221,186 @@ button {
   margin: 0;
 }
 
+/* 優先任務 */
+.priority-tasks {
+  display: grid;
+  gap: 10px;
+}
+
+.priority-item {
+  display: flex;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fafbfc;
+}
+
+.priority-badge {
+  background: var(--blue);
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+  height: fit-content;
+}
+
+.priority-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.priority-content strong {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+
+.priority-content small {
+  color: var(--muted);
+  font-size: 12px;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.priority-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.meta-tag {
+  font-size: 11px;
+  color: var(--muted);
+  background: #f0f3f7;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
 /* 時間軸 */
 .timeline {
   display: grid;
-  gap: 14px;
+  gap: 12px;
 }
 
 .event {
   display: grid;
-  grid-template-columns: 58px 12px 1fr;
+  grid-template-columns: 48px 10px 1fr;
   gap: 10px;
   align-items: start;
+  padding: 8px 0;
+}
+
+.event b {
+  font-size: 13px;
+  color: var(--text);
 }
 
 .dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--blue);
-  margin-top: 5px;
+  margin-top: 4px;
 }
 
-.event strong {
+.event-content {
+  min-width: 0;
+}
+
+.event-content strong {
   display: block;
+  font-size: 13px;
 }
 
-.event small {
+.event-content small {
   color: var(--muted);
+  font-size: 12px;
+}
+
+.event-meta {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.event-time {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.status-badge {
+  font-size: 10px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.status-upcoming {
+  background: #f0f4ff;
+  color: var(--blue);
+}
+
+.status-ongoing {
+  background: #fffbf0;
+  color: #a86d00;
+}
+
+.status-completed {
+  background: #f0f8f5;
+  color: var(--green);
 }
 
 /* 進度條 */
 .progress-list {
   display: grid;
-  gap: 15px;
+  gap: 12px;
 }
 
 .progress-row {
   display: grid;
-  grid-template-columns: 1fr 70px;
+  grid-template-columns: 1fr auto;
   gap: 12px;
+  align-items: center;
+}
+
+.project-info {
+  min-width: 0;
+}
+
+.project-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+
+.project-next {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.progress-right {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  white-space: nowrap;
 }
 
 .bar {
-  height: 8px;
+  height: 6px;
   background: #edf1f6;
   border-radius: 999px;
   overflow: hidden;
-  margin-top: 7px;
+  min-width: 60px;
 }
 
 .fill {
@@ -256,29 +408,38 @@ button {
   background: var(--blue);
 }
 
+.progress-percentage {
+  font-size: 12px;
+  font-weight: 700;
+  min-width: 35px;
+  text-align: right;
+}
+
 /* 狀態列表 */
 .status-list {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .status {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px;
+  padding: 10px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 10px;
+  font-size: 13px;
 }
 
 /* 徽章 */
 .badge {
-  font-size: 12px;
-  padding: 5px 9px;
+  font-size: 11px;
+  padding: 4px 8px;
   border-radius: 999px;
   background: #edf4ff;
   color: var(--blue);
   white-space: nowrap;
+  font-weight: 600;
 }
 
 .badge.green {
@@ -296,33 +457,18 @@ button {
   color: var(--red);
 }
 
-/* 焦點區塊 */
-.focus {
-  border-left: 4px solid var(--blue);
-  padding-left: 14px;
-  margin-bottom: 14px;
-}
-
-.focus strong {
-  display: block;
-}
-
-.focus small {
-  color: var(--muted);
-}
-
 /* 月曆 */
 .calendar {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 7px;
-  font-size: 12px;
+  gap: 6px;
+  font-size: 11px;
   text-align: center;
 }
 
 .calendar span {
   padding: 6px 0;
-  border-radius: 8px;
+  border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -352,7 +498,7 @@ button {
 
 .calendar .other-month {
   color: var(--muted);
-  opacity: 0.5;
+  opacity: 0.4;
 }
 
 .calendar span:hover:not(.head) {
@@ -362,13 +508,13 @@ button {
 /* 任務列表 */
 .task-list {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .task-item {
-  padding: 12px;
+  padding: 10px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 10px;
   transition: all 0.2s ease;
 }
 
@@ -385,7 +531,7 @@ button {
   font-size: 12px;
   padding: 6px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 6px;
   background: white;
   color: var(--text);
   cursor: pointer;
@@ -500,14 +646,24 @@ button {
 
   .topbar {
     align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
   }
 
   .title h1 {
     font-size: 22px;
   }
 
+  .actions {
+    width: 100%;
+  }
+
   .actions .btn:not(.primary) {
     display: none;
+  }
+
+  .actions .btn.primary {
+    flex: 1;
   }
 
   .kpis {
@@ -516,12 +672,12 @@ button {
   }
 
   .card {
-    padding: 15px;
-    border-radius: 16px;
+    padding: 14px;
+    border-radius: 14px;
   }
 
   .kpi .value {
-    font-size: 25px;
+    font-size: 32px;
   }
 
   .content,
@@ -612,21 +768,26 @@ button {
     font-size: 20px;
   }
 
+  .header-stats {
+    gap: 12px;
+    font-size: 12px;
+  }
+
   .card {
     padding: 12px;
   }
 
   .event {
-    grid-template-columns: 48px 10px 1fr;
+    grid-template-columns: 40px 8px 1fr;
   }
 
   .calendar span {
     padding: 4px 0;
-    font-size: 11px;
+    font-size: 10px;
   }
 
   .kpi .value {
-    font-size: 22px;
+    font-size: 28px;
   }
 
   .status {
@@ -645,5 +806,18 @@ button {
 
   .modal-content h2 {
     font-size: 18px;
+  }
+
+  .priority-item {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .priority-badge {
+    align-self: flex-start;
+  }
+
+  .meta-tag {
+    font-size: 10px;
   }
 }

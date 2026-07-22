@@ -1,6 +1,6 @@
 /**
- * 超級隨身助理 Dashboard V1
- * 應用邏輯、資料管理與交互
+ * 超級隨身助理 Dashboard V1.1
+ * 應用邏輯、資料管理與交互 - UX 優化版本
  */
 
 // ====== 常量與配置 ======
@@ -13,6 +13,53 @@ const VIEWS = {
   inbox: 'inbox',
   more: 'more'
 };
+
+// ====== 工具函數 ======
+function getRelativeTime(date) {
+  const now = new Date();
+  const diffMs = new Date(date) - now;
+  const diffMins = Math.floor(diffMs / (1000 * 60));
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+
+  if (diffMins < 0) {
+    return '已開始';
+  } else if (diffMins === 0) {
+    return '即將開始';
+  } else if (diffMins < 60) {
+    return `${diffMins} 分鐘後`;
+  } else if (diffHours < 24) {
+    return `${diffHours} 小時後`;
+  } else {
+    return '明天或更晚';
+  }
+}
+
+function getEventStatus(eventDate, eventTime) {
+  const now = new Date();
+  const eventDateTime = new Date(eventDate);
+  const [hours, mins] = eventTime.split(':');
+  eventDateTime.setHours(parseInt(hours), parseInt(mins), 0);
+
+  const diffMins = Math.floor((eventDateTime - now) / (1000 * 60));
+  
+  if (diffMins < 0) {
+    return '已完成';
+  } else if (diffMins < 60) {
+    return '進行中';
+  } else {
+    return '即將開始';
+  }
+}
+
+function formatDate(date) {
+  const d = new Date(date);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const weekDays = ['日', '一', '二', '三', '四', '五', '六'];
+  const weekDay = weekDays[d.getDay()];
+  return `${year}/${month}/${day} (${weekDay})`;
+}
 
 // ====== 資料模型 ======
 class DataManager {
@@ -435,11 +482,18 @@ class UIManager {
     const waitingCount = waitingTasks.length;
     const overdueCount = this.dm.getTasksByStatus('overdue').length;
 
+    const dateStr = formatDate(today);
+
     let html = `
       <header class="topbar">
         <div class="title">
-          <h1>早安，Andy</h1>
-          <p>今天先處理最重要的事，不必把全部工作背在腦中。</p>
+          <h1>今天</h1>
+          <p>${dateStr}</p>
+          <div class="header-stats">
+            <span class="stat">待辦: ${todayTasks.length}</span>
+            <span class="stat">行程: ${todayEvents.length}</span>
+            <span class="stat">逾期: ${overdueCount}</span>
+          </div>
         </div>
         <div class="actions">
           <button class="btn">本週</button>
@@ -476,98 +530,162 @@ class UIManager {
       </section>
 
       <section class="grid content">
+    `;
+
+    // 今天最重要的三件事 - 只在有資料時顯示
+    if (topTasks.length > 0) {
+      html += `
         <div class="card">
           <h2>今天最重要的三件事</h2>
-          ${topTasks.length > 0
-            ? topTasks.map(t => `
-              <div class="focus">
-                <strong>${t.title}</strong>
-                <small>${t.description || ''}</small>
+          <div class="priority-tasks">
+      `;
+      topTasks.forEach(t => {
+        const project = this.dm.data.projects.find(p => p.id === t.projectId);
+        const projectName = project ? project.title : null;
+        const dueDate = new Date(t.dueDate).toLocaleDateString('zh-TW', { month: '2-digit', day: '2-digit' });
+        
+        html += `
+          <div class="priority-item">
+            <div class="priority-badge">P${t.priority}</div>
+            <div class="priority-content">
+              <strong>${t.title}</strong>
+              <small>${t.description || ''}</small>
+              <div class="priority-meta">
+                ${projectName ? `<span class="meta-tag">${projectName}</span>` : ''}
+                <span class="meta-tag">到期: ${dueDate}</span>
               </div>
-            `).join('')
-            : '<div style="color: var(--muted);">沒有優先任務</div>'
-          }
+            </div>
+          </div>
+        `;
+      });
+      html += `
+          </div>
         </div>
+      `;
+    }
 
+    // 今日行程
+    if (todayEvents.length > 0) {
+      html += `
         <div class="card">
           <h2>今日行程</h2>
           <div class="timeline">
-            ${todayEvents.length > 0
-              ? todayEvents.map(e => `
-                <div class="event">
-                  <b>${e.time}</b>
-                  <i class="dot"></i>
-                  <div>
-                    <strong>${e.title}</strong>
-                    <small>${e.location || e.duration}</small>
-                  </div>
-                </div>
-              `).join('')
-              : '<div style="color: var(--muted);">今日無行程</div>'
-            }
-          </div>
-        </div>
+      `;
+      todayEvents.forEach(e => {
+        const relativeTime = getRelativeTime(new Date(e.date).toDateString() + ' ' + e.time);
+        const status = getEventStatus(e.date, e.time);
+        let statusBadgeClass = 'status-upcoming';
+        if (status === '進行中') statusBadgeClass = 'status-ongoing';
+        if (status === '已完成') statusBadgeClass = 'status-completed';
 
-        <div class="card">
-          <h2>專案進度概覽</h2>
-          <div class="progress-list">
-            ${this.dm.data.projects.map(p => `
-              <div class="progress-row">
-                <div>
-                  ${p.title}
-                  <div class="bar">
-                    <div class="fill" style="width:${p.progress}%; background:var(--${p.color === 'blue' ? 'blue' : p.color === 'green' ? 'green' : p.color === 'orange' ? 'orange' : 'purple'})"></div>
-                  </div>
-                </div>
-                <b>${p.progress}%</b>
+        html += `
+          <div class="event">
+            <b>${e.time}</b>
+            <i class="dot"></i>
+            <div class="event-content">
+              <strong>${e.title}</strong>
+              <small>${e.location || e.duration}</small>
+              <div class="event-meta">
+                <span class="event-time">${relativeTime}</span>
+                <span class="status-badge ${statusBadgeClass}">${status}</span>
               </div>
-            `).join('')}
+            </div>
+          </div>
+        `;
+      });
+      html += `
           </div>
         </div>
-      </section>
+      `;
+    }
 
+    // 專案進度概覽
+    html += `
+      <div class="card">
+        <h2>專案進度概覽</h2>
+        <div class="progress-list">
+    `;
+    this.dm.data.projects.forEach(p => {
+      const nextStep = p.nextStep || '尚未設定';
+      html += `
+        <div class="progress-row">
+          <div class="project-info">
+            <div class="project-title">${p.title}</div>
+            <div class="project-next">下一步: ${nextStep}</div>
+          </div>
+          <div class="progress-right">
+            <div class="bar">
+              <div class="fill" style="width:${p.progress}%; background:var(--${p.color === 'blue' ? 'blue' : p.color === 'green' ? 'green' : p.color === 'orange' ? 'orange' : 'purple'})"></div>
+            </div>
+            <b class="progress-percentage">${p.progress}%</b>
+          </div>
+        </div>
+      `;
+    });
+    html += `
+        </div>
+      </div>
+    `;
+
+    html += `</section>`;
+
+    // 底部區域
+    html += `
       <section class="grid bottom" style="margin-top:16px">
+    `;
+
+    if (waitingTasks.length > 0) {
+      html += `
         <div class="card">
           <h2>等待你決策</h2>
           <div class="status-list">
-            ${waitingTasks.length > 0
-              ? waitingTasks.map(t => `
-                <div class="status">
-                  <span>${t.title}</span>
-                  <span class="badge">待確認</span>
-                </div>
-              `).join('')
-              : '<div style="color: var(--muted); font-size: 14px;">暫無待確認項目</div>'
-            }
+      `;
+      waitingTasks.forEach(t => {
+        html += `
+          <div class="status">
+            <span>${t.title}</span>
+            <span class="badge">待確認</span>
+          </div>
+        `;
+      });
+      html += `
           </div>
         </div>
+      `;
+    }
+
+    if (upcomingItems.length > 0) {
+      html += `
         <div class="card">
           <h2>即將到期</h2>
           <div class="status-list">
-            ${upcomingItems.length > 0
-              ? upcomingItems.slice(0, 3).map(t => {
-                const dueDate = new Date(t.dueDate);
-                const daysUntil = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24));
-                let badgeClass = 'green';
-                let badgeText = '本週';
-                if (daysUntil <= 1) {
-                  badgeClass = 'red';
-                  badgeText = '明天';
-                } else if (daysUntil <= 3) {
-                  badgeClass = 'orange';
-                  badgeText = '本週';
-                }
-                return `
-                  <div class="status">
-                    <span>${t.title}</span>
-                    <span class="badge ${badgeClass}">${badgeText}</span>
-                  </div>
-                `;
-              }).join('')
-              : '<div style="color: var(--muted); font-size: 14px;">暫無即將到期項目</div>'
-            }
+      `;
+      upcomingItems.slice(0, 3).forEach(t => {
+        const dueDate = new Date(t.dueDate);
+        const daysUntil = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24));
+        let badgeClass = 'green';
+        let badgeText = '本週';
+        if (daysUntil <= 1) {
+          badgeClass = 'red';
+          badgeText = '明天';
+        } else if (daysUntil <= 3) {
+          badgeClass = 'orange';
+          badgeText = '本週';
+        }
+        html += `
+          <div class="status">
+            <span>${t.title}</span>
+            <span class="badge ${badgeClass}">${badgeText}</span>
+          </div>
+        `;
+      });
+      html += `
           </div>
         </div>
+      `;
+    }
+
+    html += `
         <div class="card">
           <h2>本月</h2>
           ${this.renderSmallCalendar()}
@@ -836,11 +954,11 @@ class UIManager {
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 14px;">
             <div>
               <strong>下一步</strong>
-              <p style="color: var(--muted); margin: 4px 0 0;">${p.nextStep}</p>
+              <p style="color: var(--muted); margin: 4px 0 0;">${p.nextStep || '尚未設定'}</p>
             </div>
             <div>
               <strong>風險</strong>
-              <p style="color: var(--muted); margin: 4px 0 0;">${p.risk}</p>
+              <p style="color: var(--muted); margin: 4px 0 0;">${p.risk || '尚未設定'}</p>
             </div>
           </div>
           ${tasks.length > 0 ? `
