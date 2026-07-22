@@ -1,0 +1,649 @@
+/* 超級隨身助理 Dashboard V1 - 全局樣式 */
+
+:root {
+  --bg: #f4f7fb;
+  --panel: #fff;
+  --text: #17233b;
+  --muted: #6d7890;
+  --line: #e4eaf2;
+  --blue: #246bfd;
+  --nav: #0d2340;
+  --green: #24a46d;
+  --orange: #f59e0b;
+  --red: #ef5350;
+  --purple: #7c5cff;
+  --shadow: 0 10px 28px rgba(21, 42, 79, 0.08);
+  --radius: 18px;
+}
+
+/* 基礎樣式 */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans TC", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+button {
+  font: inherit;
+}
+
+/* 應用布局 */
+.app {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: 100vh;
+}
+
+/* 側邊欄 */
+.sidebar {
+  background: var(--nav);
+  color: white;
+  padding: 22px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.brand {
+  font-size: 20px;
+  font-weight: 800;
+  padding: 8px 10px;
+}
+
+.brand small {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.65;
+  margin-top: 4px;
+}
+
+/* 導覽菜單 */
+.nav {
+  display: grid;
+  gap: 8px;
+}
+
+.nav button {
+  border: 0;
+  background: transparent;
+  color: #dfe8f4;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s ease;
+}
+
+.nav button.active,
+.nav button:hover {
+  background: #174783;
+  color: white;
+}
+
+.profile {
+  margin-top: auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 18px 8px 4px;
+  font-size: 14px;
+}
+
+/* 主內容區域 */
+.main {
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.title h1 {
+  font-size: 26px;
+  margin: 0;
+}
+
+.title p {
+  margin: 5px 0 0;
+  color: var(--muted);
+}
+
+/* 按鈕樣式 */
+.actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.btn {
+  border: 1px solid var(--line);
+  background: white;
+  border-radius: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s ease;
+}
+
+.btn:hover {
+  background: #f9f9f9;
+}
+
+.btn.primary {
+  background: var(--blue);
+  color: white;
+  border-color: var(--blue);
+}
+
+.btn.primary:hover {
+  background: #1d54d0;
+}
+
+/* 網格布局 */
+.grid {
+  display: grid;
+  gap: 16px;
+}
+
+.kpis {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin-bottom: 16px;
+}
+
+/* 卡片 */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 18px;
+}
+
+.kpi .label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.kpi .value {
+  font-size: 30px;
+  font-weight: 800;
+  margin: 8px 0 4px;
+}
+
+.kpi .note {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.content {
+  grid-template-columns: 1.15fr 0.9fr 1.15fr;
+}
+
+.bottom {
+  grid-template-columns: 1.05fr 0.85fr 0.8fr;
+}
+
+.card h2 {
+  font-size: 17px;
+  margin: 0 0 16px;
+}
+
+.card h3 {
+  font-size: 15px;
+  margin: 0;
+}
+
+/* 時間軸 */
+.timeline {
+  display: grid;
+  gap: 14px;
+}
+
+.event {
+  display: grid;
+  grid-template-columns: 58px 12px 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--blue);
+  margin-top: 5px;
+}
+
+.event strong {
+  display: block;
+}
+
+.event small {
+  color: var(--muted);
+}
+
+/* 進度條 */
+.progress-list {
+  display: grid;
+  gap: 15px;
+}
+
+.progress-row {
+  display: grid;
+  grid-template-columns: 1fr 70px;
+  gap: 12px;
+}
+
+.bar {
+  height: 8px;
+  background: #edf1f6;
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 7px;
+}
+
+.fill {
+  height: 100%;
+  background: var(--blue);
+}
+
+/* 狀態列表 */
+.status-list {
+  display: grid;
+  gap: 12px;
+}
+
+.status {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+/* 徽章 */
+.badge {
+  font-size: 12px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #edf4ff;
+  color: var(--blue);
+  white-space: nowrap;
+}
+
+.badge.green {
+  background: #eaf8f2;
+  color: var(--green);
+}
+
+.badge.orange {
+  background: #fff6df;
+  color: #a86d00;
+}
+
+.badge.red {
+  background: #fff0ef;
+  color: var(--red);
+}
+
+/* 焦點區塊 */
+.focus {
+  border-left: 4px solid var(--blue);
+  padding-left: 14px;
+  margin-bottom: 14px;
+}
+
+.focus strong {
+  display: block;
+}
+
+.focus small {
+  color: var(--muted);
+}
+
+/* 月曆 */
+.calendar {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 7px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.calendar span {
+  padding: 6px 0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.calendar .head {
+  font-weight: 700;
+  color: var(--muted);
+  cursor: default;
+}
+
+.calendar .today {
+  background: var(--blue);
+  color: white;
+  font-weight: 700;
+}
+
+.calendar .has-event {
+  font-weight: 700;
+  color: var(--blue);
+  background: #f0f4ff;
+}
+
+.calendar .selected {
+  background: var(--blue);
+  color: white;
+}
+
+.calendar .other-month {
+  color: var(--muted);
+  opacity: 0.5;
+}
+
+.calendar span:hover:not(.head) {
+  background: #e4eaf2;
+}
+
+/* 任務列表 */
+.task-list {
+  display: grid;
+  gap: 12px;
+}
+
+.task-item {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  transition: all 0.2s ease;
+}
+
+.task-item:hover {
+  border-color: var(--blue);
+  box-shadow: 0 2px 8px rgba(36, 107, 253, 0.08);
+}
+
+.task-item input[type="checkbox"] {
+  accent-color: var(--blue);
+}
+
+.task-item select {
+  font-size: 12px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  color: var(--text);
+  cursor: pointer;
+}
+
+/* 浮動按鈕 */
+.fab {
+  display: none;
+}
+
+/* 手機導覽 */
+.mobile-nav {
+  display: none;
+}
+
+/* Modal 樣式 */
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.modal-content {
+  background: white;
+  border-radius: 18px;
+  padding: 24px;
+  max-width: 500px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-content h2 {
+  margin: 0 0 20px;
+  font-size: 20px;
+}
+
+.modal-content label {
+  display: block;
+  margin-bottom: 12px;
+}
+
+.modal-content strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.modal-content input,
+.modal-content select {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.modal-content input:focus,
+.modal-content select:focus {
+  outline: none;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(36, 107, 253, 0.1);
+}
+
+.modal-content small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* 隱藏行動版元素 */
+.hide-mobile {
+  display: block;
+}
+
+/* 平板裝置 (1000px 以下) */
+@media (max-width: 1000px) {
+  .kpis {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .content,
+  .bottom {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 手機裝置 (768px 以下) */
+@media (max-width: 768px) {
+  .app {
+    display: block;
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .main {
+    padding: 16px 14px 88px;
+    overflow-y: auto;
+  }
+
+  .topbar {
+    align-items: flex-start;
+  }
+
+  .title h1 {
+    font-size: 22px;
+  }
+
+  .actions .btn:not(.primary) {
+    display: none;
+  }
+
+  .kpis {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  .card {
+    padding: 15px;
+    border-radius: 16px;
+  }
+
+  .kpi .value {
+    font-size: 25px;
+  }
+
+  .content,
+  .bottom {
+    grid-template-columns: 1fr;
+  }
+
+  .hide-mobile {
+    display: none;
+  }
+
+  /* 手機底部導覽 */
+  .mobile-nav {
+    display: grid;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    grid-template-columns: repeat(5, 1fr);
+    background: white;
+    border-top: 1px solid var(--line);
+    padding: 9px 4px calc(9px + env(safe-area-inset-bottom, 0px));
+    z-index: 999;
+  }
+
+  .mobile-nav button {
+    border: 0;
+    background: white;
+    color: var(--muted);
+    font-size: 11px;
+    padding: 8px 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .mobile-nav button.active {
+    color: var(--blue);
+    font-weight: 800;
+  }
+
+  /* 浮動按鈕 */
+  .fab {
+    display: block;
+    position: fixed;
+    right: 18px;
+    bottom: 78px;
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    border: 0;
+    background: var(--blue);
+    color: white;
+    font-size: 28px;
+    box-shadow: 0 12px 24px rgba(36, 107, 253, 0.3);
+    cursor: pointer;
+    z-index: 998;
+    transition: all 0.2s ease;
+  }
+
+  .fab:active {
+    transform: scale(0.95);
+  }
+
+  /* Modal 在手機上全屏 */
+  .modal {
+    padding: 0;
+  }
+
+  .modal-content {
+    border-radius: 16px 16px 0 0;
+    max-width: 100%;
+    max-height: 100%;
+    width: 100%;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+  }
+}
+
+/* 極小螢幕 (390px) */
+@media (max-width: 390px) {
+  .main {
+    padding: 12px 10px 88px;
+  }
+
+  .title h1 {
+    font-size: 20px;
+  }
+
+  .card {
+    padding: 12px;
+  }
+
+  .event {
+    grid-template-columns: 48px 10px 1fr;
+  }
+
+  .calendar span {
+    padding: 4px 0;
+    font-size: 11px;
+  }
+
+  .kpi .value {
+    font-size: 22px;
+  }
+
+  .status {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .badge {
+    align-self: flex-end;
+  }
+
+  .modal-content {
+    padding: 16px;
+  }
+
+  .modal-content h2 {
+    font-size: 18px;
+  }
+}
