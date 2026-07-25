@@ -1,15 +1,26 @@
 import { projectCard } from '../components/cards.js';
-import { getBlockedTasks, getDueSoonTasks, getOverdueTasks, getProgress } from '../components/metrics.js';
 import { emptyState, layout } from '../components/ui.js';
+import {
+  getBlockedTasks,
+  getDueSoonTasks,
+  getHealth,
+  getMemberById,
+  getOverdueTasks,
+  getProgress,
+  getProjectsByWorkspaceId,
+  getRisk,
+  getWorkspaceById,
+  getWorkspaceTasks
+} from '../store/selectors.js';
 
-export function renderWorkspacePage(data, workspaceId) {
-  const workspace = data.workspaces.find((item) => item.id === workspaceId) || data.workspaces[0];
-  const projects = data.projects.filter((project) => project.workspaceId === workspace.id);
-  const projectTasks = data.tasks.filter((task) => projects.some((project) => project.id === task.projectId));
-  const progress = getProgress(projectTasks);
-  const overdue = getOverdueTasks(projectTasks).length;
-  const dueSoon = getDueSoonTasks(projectTasks).length;
-  const blocked = getBlockedTasks(projectTasks).length;
+export function renderWorkspacePage(state, workspaceId) {
+  const workspace = getWorkspaceById(state, workspaceId) || state.workspaces[0];
+  const projects = getProjectsByWorkspaceId(state, workspace.id);
+  const workspaceTasks = getWorkspaceTasks(state, workspace.id);
+  const progress = getProgress(workspaceTasks);
+  const overdue = getOverdueTasks(workspaceTasks).length;
+  const dueSoon = getDueSoonTasks(workspaceTasks).length;
+  const blocked = getBlockedTasks(workspaceTasks).length;
 
   return layout({
     title: workspace.name,
@@ -31,9 +42,21 @@ export function renderWorkspacePage(data, workspaceId) {
           <p>Open a project to review team progress, milestones, risk, and next actions.</p>
         </div>
         <div class="v2-card-grid">
-          ${projects.length ? projects.map((project) => projectCard(data, project)).join('') : emptyState('No projects yet', 'Create a project to start the workspace dashboard.')}
+          ${projects.length ? projects.map((project) => projectCard(toProjectCard(state, project))).join('') : emptyState('No projects yet', 'Create a project to start the workspace dashboard.')}
         </div>
       </section>
     `
   });
+}
+
+function toProjectCard(state, project) {
+  const tasks = state.tasks.filter((task) => task.projectId === project.id);
+  return {
+    ...project,
+    ownerName: getMemberById(state, project.ownerId).name,
+    progress: getProgress(tasks),
+    health: getHealth(project, tasks),
+    risk: getRisk(project, tasks),
+    blockedCount: getBlockedTasks(tasks).length
+  };
 }

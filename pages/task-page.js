@@ -1,17 +1,27 @@
-import { getUser } from '../components/metrics.js';
 import { badge, emptyState, escapeHtml, layout, statusLabel, weightLabel } from '../components/ui.js';
+import {
+  getActivitiesByTaskId,
+  getAttachmentsByTaskId,
+  getBlockingTasks,
+  getDependencyTasks,
+  getMemberById,
+  getProjectById,
+  getTaskById,
+  getTeamById,
+  getWorkspaceById
+} from '../store/selectors.js';
+import { TASK_STATUSES } from '../store/state-utils.js';
 
-export function renderTaskPage(data, taskId) {
-  const task = data.tasks.find((item) => item.id === taskId) || data.tasks[0];
-  const team = data.teams.find((item) => item.id === task.teamId);
-  const project = data.projects.find((item) => item.id === task.projectId);
-  const workspace = data.workspaces.find((item) => item.id === project.workspaceId);
-  const owner = getUser(data, task.ownerId);
-  const dependencies = task.dependsOnTaskIds.map((id) => data.tasks.find((item) => item.id === id)).filter(Boolean);
-  const blocking = data.tasks.filter((item) => item.dependsOnTaskIds.includes(task.id));
-  const links = data.externalLinks.filter((link) => link.taskId === task.id || link.projectId === task.projectId);
-  const activity = data.activity.filter((item) => item.projectId === task.projectId && (item.text.toLowerCase().includes(task.title.toLowerCase()) || item.type === 'external_link'));
-
+export function renderTaskPage(state, taskId) {
+  const task = getTaskById(state, taskId) || state.tasks[0];
+  const team = getTeamById(state, task.teamId) || state.teams[0];
+  const project = getProjectById(state, task.projectId) || state.projects[0];
+  const workspace = getWorkspaceById(state, project.workspaceId) || state.workspaces[0];
+  const owner = getMemberById(state, task.assigneeId || task.ownerId);
+  const dependencies = getDependencyTasks(state, task);
+  const blocking = getBlockingTasks(state, task.id);
+  const links = getAttachmentsByTaskId(state, task.id);
+  const activity = getActivitiesByTaskId(state, task.id);
 
   return layout({
     title: task.title,
@@ -31,12 +41,13 @@ export function renderTaskPage(data, taskId) {
             ${badge(statusLabel(task.status), task.status === 'blocked' || task.blocked ? 'danger' : task.status === 'done' ? 'good' : 'neutral')}
           </div>
           <dl class="v2-detail-list">
+            <div><dt>Status</dt><dd>${renderStatusControl(task)}</dd></div>
             <div><dt>Owner</dt><dd>${escapeHtml(owner.name)}</dd></div>
             <div><dt>Team</dt><dd>${escapeHtml(team.name)}</dd></div>
             <div><dt>Due Date</dt><dd>${escapeHtml(task.dueDate)}</dd></div>
             <div><dt>Size</dt><dd>${escapeHtml(weightLabel(task.weight))} (${task.weight} points)</dd></div>
             <div><dt>Next Action</dt><dd>${escapeHtml(task.nextAction)}</dd></div>
-            ${task.blocked ? `<div><dt>Blocked Reason</dt><dd>${escapeHtml(task.blockedReason)}</dd></div>` : ''}
+            ${task.blocked ? `<div><dt>Blocked Reason</dt><dd>${escapeHtml(task.blockedReason || 'Blocked by current status.')}</dd></div>` : ''}
           </dl>
         </article>
         <aside class="v2-card">
@@ -53,7 +64,7 @@ export function renderTaskPage(data, taskId) {
           ${links.map((link) => `
             <a class="v2-list-link" href="${escapeHtml(link.url)}" target="_blank" rel="noreferrer">
               <strong>${escapeHtml(link.title)}</strong>
-              <span>${escapeHtml(link.type)} · ${escapeHtml(link.note)}</span>
+              <span>${escapeHtml(link.type)} - ${escapeHtml(link.note)}</span>
             </a>
           `).join('') || emptyState('No external links', 'Phase 1 stores links only. Files remain in the original cloud service.')}
         </div>
@@ -61,11 +72,22 @@ export function renderTaskPage(data, taskId) {
           <h2>Activity</h2>
           ${activity.map((item) => `
             <div class="v2-list-item">
-              <div><strong>${escapeHtml(item.type.replace('_', ' '))}</strong><span>${escapeHtml(item.text)} · ${escapeHtml(item.createdAt)}</span></div>
+              <div><strong>${escapeHtml(item.type.replace('_', ' '))}</strong><span>${escapeHtml(item.text)} - ${escapeHtml(item.createdAt)}</span></div>
             </div>
           `).join('') || emptyState('No activity yet', 'Task activity will appear here when mock events exist.')}
         </div>
       </section>
     `
   });
+}
+
+function renderStatusControl(task) {
+  return `
+    <label class="v2-status-control">
+      <span class="sr-only">Task status</span>
+      <select data-action="update-task-status" data-task-id="${escapeHtml(task.id)}">
+        ${TASK_STATUSES.map((status) => `<option value="${status}" ${task.status === status ? 'selected' : ''}>${escapeHtml(statusLabel(status))}</option>`).join('')}
+      </select>
+    </label>
+  `;
 }
