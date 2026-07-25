@@ -1,6 +1,53 @@
 import { dispatch, getState } from './store.js';
 import { isNullableDueDate, TASK_STATUSES } from './state-utils.js';
 
+export function createTask({ title, teamId, projectId, assigneeId, dueDate = null, weight = 2 }) {
+  if (!title || typeof title !== 'string' || !title.trim()) {
+    return { ok: false, error: 'INVALID_TITLE' };
+  }
+
+  const state = getState();
+  const team = state.teams.find((item) => item.id === teamId);
+  if (!team) return { ok: false, error: 'TEAM_NOT_FOUND' };
+  if (!state.projects.some((project) => project.id === projectId)) {
+    return { ok: false, error: 'PROJECT_NOT_FOUND' };
+  }
+  if (team.projectId !== projectId) {
+    return { ok: false, error: 'TEAM_PROJECT_MISMATCH' };
+  }
+  if (!state.members.some((member) => member.id === assigneeId)) {
+    return { ok: false, error: 'MEMBER_NOT_FOUND' };
+  }
+  if (!isNullableDueDate(dueDate)) {
+    return { ok: false, error: 'INVALID_DUE_DATE' };
+  }
+
+  const parsedWeight = Number(weight);
+  if (!Number.isFinite(parsedWeight) || parsedWeight < 1 || parsedWeight > 3) {
+    return { ok: false, error: 'INVALID_WEIGHT' };
+  }
+
+  const id = `task-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+
+  return dispatch((draft) => {
+    draft.tasks.push({
+      id,
+      title: title.trim(),
+      teamId,
+      projectId,
+      status: 'not-started',
+      ownerId: assigneeId,
+      assigneeId,
+      dueDate,
+      weight: parsedWeight,
+      nextAction: 'Define next action',
+      dependsOnTaskIds: [],
+      blocked: false
+    });
+    return { ok: true, taskId: id };
+  });
+}
+
 export function selectWorkspace(workspaceId) {
   const state = getState();
   if (!state.workspaces.some((workspace) => workspace.id === workspaceId)) {

@@ -4,7 +4,6 @@ import {
   getAttachmentsByTaskId,
   getBlockingTasks,
   getDependencyTasks,
-  getMemberById,
   getProjectById,
   getTaskById,
   getTeamById,
@@ -17,7 +16,6 @@ export function renderTaskPage(state, taskId) {
   const team = getTeamById(state, task.teamId) || state.teams[0];
   const project = getProjectById(state, task.projectId) || state.projects[0];
   const workspace = getWorkspaceById(state, project.workspaceId) || state.workspaces[0];
-  const owner = getMemberById(state, task.assigneeId || task.ownerId);
   const dependencies = getDependencyTasks(state, task);
   const blocking = getBlockingTasks(state, task.id);
   const links = getAttachmentsByTaskId(state, task.id);
@@ -42,9 +40,9 @@ export function renderTaskPage(state, taskId) {
           </div>
           <dl class="v2-detail-list">
             <div><dt>Status</dt><dd>${renderStatusControl(task)}</dd></div>
-            <div><dt>Owner</dt><dd>${escapeHtml(owner.name)}</dd></div>
+            <div><dt>Owner</dt><dd>${renderAssigneeControl(task, state.members)}</dd></div>
             <div><dt>Team</dt><dd>${escapeHtml(team.name)}</dd></div>
-            <div><dt>Due Date</dt><dd>${escapeHtml(task.dueDate)}</dd></div>
+            <div><dt>Due Date</dt><dd>${renderDueDateControl(task)}</dd></div>
             <div><dt>Size</dt><dd>${escapeHtml(weightLabel(task.weight))} (${task.weight} points)</dd></div>
             <div><dt>Next Action</dt><dd>${escapeHtml(task.nextAction)}</dd></div>
             ${task.blocked ? `<div><dt>Blocked Reason</dt><dd>${escapeHtml(task.blockedReason || 'Blocked by current status.')}</dd></div>` : ''}
@@ -88,6 +86,27 @@ function renderStatusControl(task) {
       <select data-action="update-task-status" data-task-id="${escapeHtml(task.id)}">
         ${TASK_STATUSES.map((status) => `<option value="${status}" ${task.status === status ? 'selected' : ''}>${escapeHtml(statusLabel(status))}</option>`).join('')}
       </select>
+    </label>
+  `;
+}
+
+function renderAssigneeControl(task, members) {
+  const currentId = task.assigneeId || task.ownerId;
+  return `
+    <label class="v2-status-control">
+      <span class="sr-only">Task owner</span>
+      <select data-action="update-task-assignee" data-task-id="${escapeHtml(task.id)}">
+        ${members.map((member) => `<option value="${escapeHtml(member.id)}" ${member.id === currentId ? 'selected' : ''}>${escapeHtml(member.name)}</option>`).join('')}
+      </select>
+    </label>
+  `;
+}
+
+function renderDueDateControl(task) {
+  return `
+    <label class="v2-status-control">
+      <span class="sr-only">Task due date</span>
+      <input type="date" data-action="update-task-due-date" data-task-id="${escapeHtml(task.id)}" value="${escapeHtml(task.dueDate || '')}">
     </label>
   `;
 }
