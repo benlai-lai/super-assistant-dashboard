@@ -33,7 +33,7 @@ export function renderTeamPage(state, teamId) {
       { label: 'Project', href: `#/project/${project.id}` },
       { label: 'Team', href: `#/team/${team.id}` }
     ],
-    actions: '<button class="v2-btn primary" type="button" data-action="open-create-task">Create Task</button>',
+    actions: '<button class="v2-btn primary" type="button" data-action="toggle-create-task">Create Task</button>',
     content: `
       <section class="v2-hero-card">
         <div>
@@ -49,6 +49,28 @@ export function renderTeamPage(state, teamId) {
         <div><span>Overdue</span><strong>${overdue.length}</strong></div>
         <div><span>Blocked</span><strong>${blocked.length}</strong></div>
         <div><span>Workload</span><strong>${workload.status}</strong></div>
+      </section>
+      <section class="v2-card v2-create-task-panel" id="create-task-panel" hidden>
+        <h2>New Task</h2>
+        <form data-action="create-task" class="v2-form">
+          <label>
+            <span>Task title</span>
+            <input type="text" name="title" placeholder="Task title" required>
+          </label>
+          <label>
+            <span>Assignee</span>
+            <select name="assigneeId" required>
+              ${state.members.map((member) => `<option value="${escapeHtml(member.id)}">${escapeHtml(member.name)}</option>`).join('')}
+            </select>
+          </label>
+          <label>
+            <span>Due date</span>
+            <input type="date" name="dueDate">
+          </label>
+          <input type="hidden" name="teamId" value="${escapeHtml(team.id)}">
+          <input type="hidden" name="projectId" value="${escapeHtml(project.id)}">
+          <button type="submit" class="v2-btn primary">Create</button>
+        </form>
       </section>
       <section class="v2-section">
         <div class="v2-section-head">

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 
 import {
+  createTask,
   updateTaskAssignee,
   updateTaskDueDate,
   updateTaskStatus
@@ -48,6 +49,33 @@ assert.deepEqual(updateTaskDueDate(targetTaskId, 'bad-date'), { ok: false, error
 assert.equal(updateTaskDueDate(targetTaskId, null).ok, true);
 assert.equal(getTaskById(getState(), targetTaskId).dueDate, null);
 assert.equal(updateTaskDueDate(targetTaskId, '2026-07-25').ok, true);
+
+assert.deepEqual(createTask({ title: '', teamId: 'team-checkin', projectId: 'project-summer-camp', assigneeId: 'user-amy', dueDate: '2026-08-01' }), { ok: false, error: 'INVALID_TITLE' });
+assert.deepEqual(createTask({ title: 'New task', teamId: 'missing-team', projectId: 'project-summer-camp', assigneeId: 'user-amy', dueDate: '2026-08-01' }), { ok: false, error: 'TEAM_NOT_FOUND' });
+assert.deepEqual(createTask({ title: 'New task', teamId: 'team-checkin', projectId: 'missing-project', assigneeId: 'user-amy', dueDate: '2026-08-01' }), { ok: false, error: 'PROJECT_NOT_FOUND' });
+assert.deepEqual(createTask({ title: 'New task', teamId: 'team-checkin', projectId: 'project-summer-camp', assigneeId: 'missing-member', dueDate: '2026-08-01' }), { ok: false, error: 'MEMBER_NOT_FOUND' });
+assert.deepEqual(createTask({ title: 'New task', teamId: 'team-checkin', projectId: 'project-summer-camp', assigneeId: 'user-amy', dueDate: 'invalid' }), { ok: false, error: 'INVALID_DUE_DATE' });
+
+const beforeCreate = getState();
+const createResult = createTask({
+  title: 'Confirm room signs',
+  teamId: 'team-checkin',
+  projectId: 'project-summer-camp',
+  assigneeId: 'user-amy',
+  dueDate: '2026-08-01',
+  weight: 2
+});
+assert.equal(createResult.ok, true);
+assert.equal(typeof createResult.taskId, 'string');
+const afterCreate = getState();
+const createdTask = getTaskById(afterCreate, createResult.taskId);
+assert.equal(afterCreate.tasks.length, beforeCreate.tasks.length + 1);
+assert.equal(createdTask.title, 'Confirm room signs');
+assert.equal(createdTask.teamId, 'team-checkin');
+assert.equal(createdTask.projectId, 'project-summer-camp');
+assert.equal(createdTask.assigneeId, 'user-amy');
+assert.equal(createdTask.ownerId, 'user-amy');
+assert.equal(createdTask.dueDate, '2026-08-01');
 
 const datedTasks = [
   { id: 'today-open', ownerId: 'user-ben', assigneeId: 'user-ben', status: 'not-started', dueDate: '2026-07-25' },

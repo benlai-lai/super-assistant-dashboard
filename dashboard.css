@@ -361,13 +361,40 @@ select { font: inherit; }
   margin: 0;
 }
 
-.v2-status-control select {
+.v2-status-control select,
+.v2-status-control input,
+.v2-form input,
+.v2-form select,
+select.v2-status-control,
+input.v2-status-control {
   background: var(--v2-panel-soft);
   border: 1px solid var(--v2-line);
   border-radius: 8px;
   color: var(--v2-text);
   min-width: 180px;
   padding: 8px 10px;
+}
+
+.v2-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.v2-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.v2-form label span {
+  color: var(--v2-muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.v2-create-task-panel[hidden] {
+  display: none;
 }
 
 .v2-empty {
