@@ -1,15 +1,26 @@
 import { taskRow } from '../components/cards.js';
-import { getBlockedTasks, getDueSoonTasks, getOverdueTasks, getProgress, getTeamTasks, getUser, getWorkload } from '../components/metrics.js';
 import { badge, emptyState, escapeHtml, layout, progressBar } from '../components/ui.js';
+import {
+  getBlockedTasks,
+  getDueSoonTasks,
+  getMemberById,
+  getOverdueTasks,
+  getProgress,
+  getProjectById,
+  getTasksByTeamId,
+  getTeamById,
+  getWorkload,
+  getWorkspaceById
+} from '../store/selectors.js';
 
-export function renderTeamPage(data, teamId) {
-  const team = data.teams.find((item) => item.id === teamId) || data.teams[0];
-  const project = data.projects.find((item) => item.id === team.projectId);
-  const workspace = data.workspaces.find((item) => item.id === project.workspaceId);
-  const tasks = getTeamTasks(data, team.id);
+export function renderTeamPage(state, teamId) {
+  const team = getTeamById(state, teamId) || state.teams[0];
+  const project = getProjectById(state, team.projectId) || state.projects[0];
+  const workspace = getWorkspaceById(state, project.workspaceId) || state.workspaces[0];
+  const tasks = getTasksByTeamId(state, team.id);
   const progress = getProgress(tasks);
   const workload = getWorkload(tasks);
-  const lead = getUser(data, team.leadId);
+  const lead = getMemberById(state, team.leadId);
   const blocked = getBlockedTasks(tasks);
   const dueSoon = getDueSoonTasks(tasks);
   const overdue = getOverdueTasks(tasks);
@@ -48,8 +59,15 @@ export function renderTeamPage(data, teamId) {
           ${badge(`${workload.points} points`, workload.status === 'Overloaded' ? 'danger' : 'neutral')}
           ${badge(`${workload.openTasks} open tasks`, 'neutral')}
         </div>
-        <div class="v2-task-list">${tasks.map((task) => taskRow(data, task)).join('') || emptyState('No tasks', 'Create the first task for this team.')}</div>
+        <div class="v2-task-list">${tasks.map((task) => taskRow(toTaskRow(state, task))).join('') || emptyState('No tasks', 'Create the first task for this team.')}</div>
       </section>
     `
   });
+}
+
+function toTaskRow(state, task) {
+  return {
+    ...task,
+    assigneeName: getMemberById(state, task.assigneeId || task.ownerId).name
+  };
 }

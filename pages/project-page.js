@@ -1,17 +1,31 @@
 import { taskRow, teamCard } from '../components/cards.js';
-import { getBlockedTasks, getDueSoonTasks, getHealth, getOverdueTasks, getProgress, getRisk, getUser } from '../components/metrics.js';
 import { badge, emptyState, escapeHtml, layout, progressBar } from '../components/ui.js';
+import {
+  getBlockedTasks,
+  getDueSoonTasks,
+  getHealth,
+  getMemberById,
+  getMilestonesByProjectId,
+  getOverdueTasks,
+  getProgress,
+  getProjectById,
+  getProjectTasks,
+  getRisk,
+  getTeamsByProjectId,
+  getWorkspaceById,
+  getWorkload
+} from '../store/selectors.js';
 
-export function renderProjectPage(data, projectId) {
-  const project = data.projects.find((item) => item.id === projectId) || data.projects[0];
-  const workspace = data.workspaces.find((item) => item.id === project.workspaceId);
-  const teams = data.teams.filter((team) => team.projectId === project.id);
-  const tasks = data.tasks.filter((task) => task.projectId === project.id);
+export function renderProjectPage(state, projectId) {
+  const project = getProjectById(state, projectId) || state.projects[0];
+  const workspace = getWorkspaceById(state, project.workspaceId) || state.workspaces[0];
+  const teams = getTeamsByProjectId(state, project.id);
+  const tasks = getProjectTasks(state, project.id);
   const progress = getProgress(tasks);
   const health = getHealth(project, tasks);
   const risk = getRisk(project, tasks);
-  const owner = getUser(data, project.ownerId);
-  const milestones = data.milestones.filter((milestone) => milestone.projectId === project.id);
+  const owner = getMemberById(state, project.ownerId);
+  const milestones = getMilestonesByProjectId(state, project.id);
   const blockedTasks = getBlockedTasks(tasks);
   const dueSoonTasks = getDueSoonTasks(tasks);
   const overdueTasks = getOverdueTasks(tasks);
@@ -50,7 +64,7 @@ export function renderProjectPage(data, projectId) {
 
       <section class="v2-section">
         <div class="v2-section-head"><h2>Teams</h2><p>Each working group stays inside this camp project.</p></div>
-        <div class="v2-card-grid">${teams.map((team) => teamCard(data, team)).join('')}</div>
+        <div class="v2-card-grid">${teams.map((team) => teamCard(toTeamCard(state, team))).join('')}</div>
       </section>
 
       <section class="v2-two-column">
@@ -58,16 +72,34 @@ export function renderProjectPage(data, projectId) {
           <h2>Milestones</h2>
           ${milestones.map((milestone) => `
             <div class="v2-list-item">
-              <div><strong>${escapeHtml(milestone.name)}</strong><span>${escapeHtml(milestone.date)} · ${escapeHtml(getUser(data, milestone.ownerId).name)}</span></div>
+              <div><strong>${escapeHtml(milestone.name)}</strong><span>${escapeHtml(milestone.date)} - ${escapeHtml(getMemberById(state, milestone.ownerId).name)}</span></div>
               ${badge(milestone.critical ? 'Critical' : milestone.status, milestone.critical ? 'danger' : 'neutral')}
             </div>
           `).join('') || emptyState('No milestones', 'Add milestones when the project needs date-based checkpoints.')}
         </div>
         <div class="v2-card">
           <h2>Blocked Tasks</h2>
-          ${blockedTasks.map((task) => taskRow(data, task)).join('') || emptyState('No blocked tasks', 'No current blockers in this project.')}
+          ${blockedTasks.map((task) => taskRow(toTaskRow(state, task))).join('') || emptyState('No blocked tasks', 'No current blockers in this project.')}
         </div>
       </section>
     `
   });
+}
+
+function toTeamCard(state, team) {
+  const tasks = state.tasks.filter((task) => task.teamId === team.id);
+  return {
+    ...team,
+    leadName: getMemberById(state, team.leadId).name,
+    progress: getProgress(tasks),
+    workload: getWorkload(tasks),
+    blockedCount: getBlockedTasks(tasks).length
+  };
+}
+
+function toTaskRow(state, task) {
+  return {
+    ...task,
+    assigneeName: getMemberById(state, task.assigneeId || task.ownerId).name
+  };
 }

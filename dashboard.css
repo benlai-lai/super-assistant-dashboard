@@ -25,6 +25,16 @@ body {
 a { color: inherit; }
 button { font: inherit; }
 
+select { font: inherit; }
+
+.sr-only {
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  position: absolute;
+  width: 1px;
+}
+
 .prototype-shell {
   display: grid;
   grid-template-columns: 248px minmax(0, 1fr);
@@ -349,6 +359,15 @@ button { font: inherit; }
 
 .v2-detail-list dd {
   margin: 0;
+}
+
+.v2-status-control select {
+  background: var(--v2-panel-soft);
+  border: 1px solid var(--v2-line);
+  border-radius: 8px;
+  color: var(--v2-text);
+  min-width: 180px;
+  padding: 8px 10px;
 }
 
 .v2-empty {
