@@ -22,6 +22,7 @@ export function projectCard(data, project) {
       <dl class="v2-metrics">
         <div><dt>Progress</dt><dd>${progress.percent}%</dd></div>
         <div><dt>Tasks</dt><dd>${progress.completed}/${progress.total}</dd></div>
+        <div><dt>Health</dt><dd>${health.level}</dd></div>
         <div><dt>Risk</dt><dd>${risk.display}</dd></div>
         <div><dt>Blocked</dt><dd>${blocked}</dd></div>
       </dl>

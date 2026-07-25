@@ -10,6 +10,8 @@ export function renderTaskPage(data, taskId) {
   const dependencies = task.dependsOnTaskIds.map((id) => data.tasks.find((item) => item.id === id)).filter(Boolean);
   const blocking = data.tasks.filter((item) => item.dependsOnTaskIds.includes(task.id));
   const links = data.externalLinks.filter((link) => link.taskId === task.id || link.projectId === task.projectId);
+  const activity = data.activity.filter((item) => item.projectId === task.projectId && (item.text.toLowerCase().includes(task.title.toLowerCase()) || item.type === 'external_link'));
+
 
   return layout({
     title: task.title,
@@ -45,14 +47,24 @@ export function renderTaskPage(data, taskId) {
           ${blocking.map((item) => `<a class="v2-list-link" href="#/task/${item.id}">${escapeHtml(item.title)}</a>`).join('') || emptyState('Blocking none', 'No downstream tasks wait on this task.')}
         </aside>
       </section>
-      <section class="v2-card">
-        <h2>External Links</h2>
-        ${links.map((link) => `
-          <a class="v2-list-link" href="${escapeHtml(link.url)}" target="_blank" rel="noreferrer">
-            <strong>${escapeHtml(link.title)}</strong>
-            <span>${escapeHtml(link.type)} · ${escapeHtml(link.note)}</span>
-          </a>
-        `).join('') || emptyState('No external links', 'Phase 1 stores links only. Files remain in the original cloud service.')}
+      <section class="v2-two-column">
+        <div class="v2-card">
+          <h2>External Links</h2>
+          ${links.map((link) => `
+            <a class="v2-list-link" href="${escapeHtml(link.url)}" target="_blank" rel="noreferrer">
+              <strong>${escapeHtml(link.title)}</strong>
+              <span>${escapeHtml(link.type)} · ${escapeHtml(link.note)}</span>
+            </a>
+          `).join('') || emptyState('No external links', 'Phase 1 stores links only. Files remain in the original cloud service.')}
+        </div>
+        <div class="v2-card">
+          <h2>Activity</h2>
+          ${activity.map((item) => `
+            <div class="v2-list-item">
+              <div><strong>${escapeHtml(item.type.replace('_', ' '))}</strong><span>${escapeHtml(item.text)} · ${escapeHtml(item.createdAt)}</span></div>
+            </div>
+          `).join('') || emptyState('No activity yet', 'Task activity will appear here when mock events exist.')}
+        </div>
       </section>
     `
   });
