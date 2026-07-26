@@ -1,4 +1,4 @@
-﻿export const TODAY = '2026-07-25';
+import { V2_SCHEMA_VERSION } from './storage-keys.js';
 
 export const TASK_STATUSES = ['not-started', 'in-progress', 'blocked', 'done'];
 
@@ -44,6 +44,7 @@ export function normalizeMockData(mockData) {
   }));
 
   return {
+    schemaVersion: V2_SCHEMA_VERSION,
     workspaces: source.workspaces,
     projects: source.projects,
     teams: source.teams,
