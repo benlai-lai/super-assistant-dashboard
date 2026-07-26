@@ -30,7 +30,7 @@ export function renderTaskPage(state, taskId) {
       { label: 'Team', href: `#/team/${team.id}` },
       { label: 'Task', href: `#/task/${task.id}` }
     ],
-    actions: `<a class="v2-btn" href="#/team/${team.id}">Back to Team</a>`,
+    actions: renderTaskActions(task, team),
     content: `
       <section class="v2-two-column wide-left">
         <article class="v2-card">
@@ -87,6 +87,18 @@ function renderStatusControl(task) {
         ${TASK_STATUSES.map((status) => `<option value="${status}" ${task.status === status ? 'selected' : ''}>${escapeHtml(statusLabel(status))}</option>`).join('')}
       </select>
     </label>
+  `;
+}
+
+function renderTaskActions(task, team) {
+  const primaryAction = task.status === 'done'
+    ? `<button class="v2-btn" type="button" data-action="reopen-task" data-task-id="${escapeHtml(task.id)}">Reopen Task</button>`
+    : `<button class="v2-btn primary" type="button" data-action="complete-task" data-task-id="${escapeHtml(task.id)}">Complete Task</button>`;
+
+  return `
+    <a class="v2-btn" href="#/team/${team.id}">Back to Team</a>
+    ${primaryAction}
+    <button class="v2-btn danger" type="button" data-action="delete-task" data-task-id="${escapeHtml(task.id)}" data-team-id="${escapeHtml(team.id)}">Delete Task</button>
   `;
 }
 

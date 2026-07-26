@@ -132,6 +132,22 @@ export function updateTaskStatus(taskId, status) {
   });
 }
 
+export function deleteTask(taskId) {
+  const state = getState();
+  if (!state.tasks.some((task) => task.id === taskId)) {
+    return { ok: false, error: 'TASK_NOT_FOUND' };
+  }
+
+  return dispatch((draft) => {
+    draft.tasks = draft.tasks.filter((task) => task.id !== taskId);
+    draft.tasks.forEach((task) => {
+      task.dependsOnTaskIds = task.dependsOnTaskIds.filter((id) => id !== taskId);
+    });
+    if (draft.selectedTaskId === taskId) draft.selectedTaskId = null;
+    return { ok: true };
+  });
+}
+
 export function updateTaskAssignee(taskId, memberId) {
   const state = getState();
   if (!state.tasks.some((task) => task.id === taskId)) {

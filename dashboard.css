@@ -161,6 +161,11 @@ select { font: inherit; }
   border-color: var(--v2-blue);
 }
 
+.v2-btn.danger {
+  border-color: #ffd2d7;
+  color: var(--v2-red);
+}
+
 .v2-kpis {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
