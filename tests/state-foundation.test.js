@@ -9,6 +9,8 @@ import {
 } from '../store/actions.js';
 import {
   getDependencyTasks,
+  getActivitiesByTaskId,
+  getAttachmentsByTaskId,
   getDueSoonTasks,
   getOverdueTasks,
   getProgress,
@@ -98,6 +100,28 @@ assert.equal(getTaskById(afterDelete, createResult.taskId), null);
 assert.equal(getTasksByTeamId(afterDelete, 'team-checkin').some((task) => task.id === createResult.taskId), false);
 assert.equal(getProjectTasks(afterDelete, 'project-summer-camp').some((task) => task.id === createResult.taskId), false);
 
+assert.equal(getActivitiesByTaskId(getState(), 'task-projector').length, 1);
+assert.equal(getAttachmentsByTaskId(getState(), 'task-checkin-flow').length, 1);
+const activitiesBeforeProjectorDelete = getState().activities.length;
+const attachmentsBeforeProjectorDelete = getState().attachments.length;
+assert.equal(deleteTask('task-projector').ok, true);
+const afterProjectorDelete = getState();
+assert.equal(getTaskById(afterProjectorDelete, 'task-projector'), null);
+assert.equal(getActivitiesByTaskId(afterProjectorDelete, 'task-projector').length, 0);
+assert.equal(getAttachmentsByTaskId(afterProjectorDelete, 'task-checkin-flow').length, 1);
+assert.equal(afterProjectorDelete.activities.length, activitiesBeforeProjectorDelete - 1);
+assert.equal(afterProjectorDelete.attachments.length, attachmentsBeforeProjectorDelete);
+
+assert.equal(getAttachmentsByTaskId(getState(), 'task-checkin-flow').length, 1);
+const activitiesBeforeCheckinDelete = getState().activities.length;
+const attachmentsBeforeCheckinDelete = getState().attachments.length;
+assert.equal(deleteTask('task-checkin-flow').ok, true);
+const afterCheckinDelete = getState();
+assert.equal(getTaskById(afterCheckinDelete, 'task-checkin-flow'), null);
+assert.equal(getAttachmentsByTaskId(afterCheckinDelete, 'task-checkin-flow').length, 0);
+assert.equal(getActivitiesByTaskId(afterCheckinDelete, 'task-shuttle-notice').length, 1);
+assert.equal(afterCheckinDelete.activities.length, activitiesBeforeCheckinDelete);
+assert.equal(afterCheckinDelete.attachments.length, attachmentsBeforeCheckinDelete - 1);
 const datedTasks = [
   { id: 'today-open', ownerId: 'user-ben', assigneeId: 'user-ben', status: 'not-started', dueDate: '2026-07-25' },
   { id: 'upcoming-open', ownerId: 'user-ben', assigneeId: 'user-ben', status: 'not-started', dueDate: '2026-07-28' },

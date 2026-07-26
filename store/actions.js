@@ -140,6 +140,8 @@ export function deleteTask(taskId) {
 
   return dispatch((draft) => {
     draft.tasks = draft.tasks.filter((task) => task.id !== taskId);
+    draft.activities = draft.activities.filter((activity) => activity.taskId !== taskId);
+    draft.attachments = draft.attachments.filter((attachment) => attachment.taskId !== taskId);
     draft.tasks.forEach((task) => {
       task.dependsOnTaskIds = task.dependsOnTaskIds.filter((id) => id !== taskId);
     });
