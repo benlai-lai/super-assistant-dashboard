@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import {
   createTask,
+  deleteTask,
   updateTaskAssignee,
   updateTaskDueDate,
   updateTaskStatus
@@ -11,7 +12,9 @@ import {
   getDueSoonTasks,
   getOverdueTasks,
   getProgress,
+  getProjectTasks,
   getTaskById,
+  getTasksByTeamId,
   getTodayTasks
 } from '../store/selectors.js';
 import { getState, subscribe } from '../store/store.js';
@@ -76,6 +79,24 @@ assert.equal(createdTask.projectId, 'project-summer-camp');
 assert.equal(createdTask.assigneeId, 'user-amy');
 assert.equal(createdTask.ownerId, 'user-amy');
 assert.equal(createdTask.dueDate, '2026-08-01');
+
+assert.equal(updateTaskStatus(createResult.taskId, 'done').ok, true);
+assert.equal(getTaskById(getState(), createResult.taskId).status, 'done');
+assert.equal(updateTaskStatus(createResult.taskId, 'in-progress').ok, true);
+assert.equal(getTaskById(getState(), createResult.taskId).status, 'in-progress');
+assert.deepEqual(updateTaskStatus('missing-task', 'done'), { ok: false, error: 'TASK_NOT_FOUND' });
+
+const beforeCancelledDelete = JSON.stringify(getState());
+const cancelledDeleteConfirmed = false;
+if (cancelledDeleteConfirmed) deleteTask(createResult.taskId);
+assert.equal(JSON.stringify(getState()), beforeCancelledDelete);
+
+assert.deepEqual(deleteTask('missing-task'), { ok: false, error: 'TASK_NOT_FOUND' });
+assert.equal(deleteTask(createResult.taskId).ok, true);
+const afterDelete = getState();
+assert.equal(getTaskById(afterDelete, createResult.taskId), null);
+assert.equal(getTasksByTeamId(afterDelete, 'team-checkin').some((task) => task.id === createResult.taskId), false);
+assert.equal(getProjectTasks(afterDelete, 'project-summer-camp').some((task) => task.id === createResult.taskId), false);
 
 const datedTasks = [
   { id: 'today-open', ownerId: 'user-ben', assigneeId: 'user-ben', status: 'not-started', dueDate: '2026-07-25' },
