@@ -131,13 +131,13 @@ const datedTasks = [
   { id: 'invalid-date', ownerId: 'user-ben', assigneeId: 'user-ben', status: 'not-started', dueDate: 'invalid' }
 ];
 const dateState = { ...initial, currentUserId: 'user-ben', tasks: datedTasks };
-assert.deepEqual(getTodayTasks(dateState, 'user-ben').map((task) => task.id), ['today-open']);
-assert.deepEqual(getDueSoonTasks(datedTasks).map((task) => task.id), ['today-open', 'upcoming-open']);
-assert.deepEqual(getOverdueTasks(datedTasks).map((task) => task.id), ['overdue-open']);
+assert.deepEqual(getTodayTasks(dateState, 'user-ben', '2026-07-25').map((task) => task.id), ['today-open']);
+assert.deepEqual(getDueSoonTasks(datedTasks, '2026-07-25').map((task) => task.id), ['today-open', 'upcoming-open']);
+assert.deepEqual(getOverdueTasks(datedTasks, '2026-07-25').map((task) => task.id), ['overdue-open']);
 
 const selectorInput = structuredClone(dateState);
 getProgress(selectorInput.tasks);
-getOverdueTasks(selectorInput.tasks);
+getOverdueTasks(selectorInput.tasks, '2026-07-25');
 assert.deepEqual(selectorInput, dateState);
 
 const missingDependencyState = {

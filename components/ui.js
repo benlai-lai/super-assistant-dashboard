@@ -50,7 +50,7 @@ export function layout({ title, subtitle, breadcrumbs = [], actions = '', conten
         <a href="#/team/team-checkin">Team</a>
         <a href="#/my-tasks">My Tasks</a>
       </nav>
-      <p class="v2-sidebar-note">Static Vanilla JS prototype. No backend, auth, Supabase, or persistence.</p>
+      <p class="v2-sidebar-note">Static Vanilla JS prototype with local browser persistence. No backend, auth, or Supabase.</p>
     </aside>
     <main class="v2-main">
       <header class="v2-topbar">

@@ -1,4 +1,5 @@
-import { isValidDate, parseDate, TODAY } from './state-utils.js';
+import { getToday } from './clock.js';
+import { isValidDate, parseDate } from './state-utils.js';
 
 export function getCurrentUser(state) {
   return getMemberById(state, state.currentUserId);
@@ -48,8 +49,8 @@ export function getMyTasks(state, userId) {
   return state.tasks.filter((task) => task.assigneeId === userId || task.ownerId === userId);
 }
 
-export function getTodayTasks(state, userId) {
-  return getMyTasks(state, userId).filter((task) => isTaskOpen(task) && isTaskDueToday(task));
+export function getTodayTasks(state, userId, today = getToday()) {
+  return getMyTasks(state, userId).filter((task) => isTaskOpen(task) && isTaskDueToday(task, today));
 }
 
 export function getUpcomingTasks(state, userId) {
@@ -113,7 +114,7 @@ export function isTaskOpen(task) {
   return !['done', 'archived'].includes(task.status);
 }
 
-export function isTaskDueToday(task, today = TODAY) {
+export function isTaskDueToday(task, today = getToday()) {
   const dueDate = parseDate(task.dueDate);
   const todayDate = parseDate(today);
   return isValidDate(dueDate) && isValidDate(todayDate) && dueDate.valueOf() === todayDate.valueOf();
@@ -138,7 +139,7 @@ export function getWorkload(tasks) {
   return { openTasks: openTasks.length, dueSoon, overdue, points, status };
 }
 
-export function getExpectedProgress(project, today = TODAY) {
+export function getExpectedProgress(project, today = getToday()) {
   if (!project.startDate || !project.dueDate) return null;
   const start = parseDate(project.startDate);
   const due = parseDate(project.dueDate);
@@ -152,15 +153,15 @@ export function getExpectedProgress(project, today = TODAY) {
   return Math.round(((current - start) / total) * 100);
 }
 
-export function getHealth(project, tasks) {
+export function getHealth(project, tasks, today = getToday()) {
   const progress = getProgress(tasks).percent;
-  const expected = getExpectedProgress(project);
+  const expected = getExpectedProgress(project, today);
   const blocked = getBlockedTasks(tasks).length;
-  const overdue = getOverdueTasks(tasks).length;
+  const overdue = getOverdueTasks(tasks, today).length;
   const openTasks = tasks.filter(isTaskOpen).length || 1;
   const overdueRatio = overdue / openTasks;
   const dueDate = parseDate(project.dueDate);
-  const todayDate = parseDate(TODAY);
+  const todayDate = parseDate(today);
   const daysUntilDue = isValidDate(dueDate) && isValidDate(todayDate) ? Math.ceil((dueDate - todayDate) / 86400000) : null;
 
   if (daysUntilDue !== null && daysUntilDue < 0 && progress < 100) return { level: 'Delayed', reason: 'Project due date has passed.' };
@@ -190,11 +191,11 @@ export function getRisk(project, tasks) {
 
 function resolveTaskInput(stateOrTasks, userIdOrToday, maybeToday) {
   if (Array.isArray(stateOrTasks)) {
-    return { tasks: stateOrTasks, today: userIdOrToday || TODAY };
+    return { tasks: stateOrTasks, today: userIdOrToday || getToday() };
   }
 
   return {
     tasks: getMyTasks(stateOrTasks, userIdOrToday),
-    today: maybeToday || TODAY
+    today: maybeToday || getToday()
   };
 }

@@ -1,7 +1,7 @@
 # PROJECT STATUS
 
 更新日期：2026-07-26
-盤點基準：`main` / `67e686e`（與 `origin/main` 同步）
+盤點基準：Sprint 4A feature branch（起點 `main` / `5a02c8c`）
 工作區狀態：盤點開始時無未提交變更
 判定原則：只記錄現有文件、程式碼、測試與 Git 歷史可證實的內容；無法確認者標記為 `Unknown`。
 
@@ -71,18 +71,28 @@
 
 - `tests/state-foundation.test.js` 覆蓋 store 隔離、訂閱、狀態更新、建立、指派、日期、完成／重開、刪除及關聯清理、日期 selector、dependency 與 progress。
 - 2026-07-26 執行結果：`state-foundation tests passed`。
-- 瀏覽器端、視覺、響應式、可用性與 console 的自動測試：`Unknown`（Repository 內未發現對應測試）。
+- 瀏覽器端目前只有人工 smoke test；視覺、響應式、可用性與 console 的自動測試：`Unknown`（Repository 內未發現對應測試）。
+
+### 已完成：Sprint 4A Repository Adapter 與本機持久化邊界
+
+- 建立同步 repository contract：`loadState()`、`saveState(state)`、`resetState()`。
+- Memory repository 的 state 位於各 instance closure，load / save 使用 clone 避免 reference 洩漏。
+- LocalStorage repository 使用獨立 V2 key `superAssistantDashboardV2State`，不修改 V1 key `superAssistantDashboardData`。
+- V2 state 加入 `schemaVersion: 1` 與最低限度 state shape validation。
+- storage 不存在、JSON 損壞、schema version 不支援或 state shape 無效時，回退至 normalized mock state。
+- Store 提供 `createStore({ repository, initialStateFactory })`，可用 spy repository 驗證 load / save / reset。
+- 成功 dispatch 後嘗試保存；action 驗證失敗不保存；保存失敗不丟棄已完成的 in-memory update。
+- 日期 selector 改為呼叫時計算系統日期，並可明確傳入日期或 fixed clock 測試。
+- V1 migration preview 依 `app.js` 的實際 V1 key 與 `ideas` / `tasks` / `events` / `projects` / `settings` schema 建立；Sprint 4A 只預覽可遷移 Task，不正式匯入。
+- Node 語法檢查、既有 Sprint 3A / 3B / 3C 測試與新增 repository boundary 測試通過。
+- `dashboard.html` smoke test 通過：主要頁面渲染、建立任務後重整仍存在，檢查時沒有 browser console warning / error。
 
 ## 三、目前進行中
 
-- 最新可確認進度停在 Sprint 3C：任務刪除後的關聯清理，提交 `67e686e`。
-- `main` 與 `origin/main` 同步，盤點開始時沒有未提交程式變更。
+- 最新可確認進度為 Sprint 4A 本機實作與驗證完成，尚待人工驗收。
+- Sprint 4A branch 起點為 `main` 的 `5a02c8c`。
 - 目前是否另有已指派但尚未提交的 Sprint、負責人或期限：`Unknown`。
-- Roadmap Phase 1 僅部分落地：
-  - 已有集中式 store、selectors、actions 與 mock data。
-  - 尚未看到正式 repository / adapter 介面。
-  - V2 Prototype 尚未接上 `localStorage`。
-  - migration preview / dry run 尚未實作。
+- Roadmap Phase 1 已完成 repository 與本機持久化邊界；尚未完成正式 migration mapping / import。
 
 ## 四、尚未完成
 
@@ -91,9 +101,9 @@
 1. **確認下一個 Sprint 與 Phase 1 驗收邊界**
    - 確認是先完成持久化／repository adapter、V1 migration preview，或先補 UI 操作。
    - 確認 V2 Prototype 的驗收清單與完成定義。
-2. **完成 Phase 1 資料層抽象與 V1 保護**
-   - `TaskRepository` / `LocalStorageTaskRepository` 等 adapter。
-   - V1 資料備份／匯出與 migration preview / dry run。
+2. **完成 Phase 1 剩餘 V1 保護工作**
+   - V1 資料備份／匯出。
+   - 完整 mapping、duplicate detection 與正式 dry run。
    - 不覆蓋、不刪除現有 V1 `localStorage`。
 3. **補齊 V2 Prototype 的核心任務功能**
    - 完整文件狀態集：Backlog、Not Started、In Progress、Blocked、Review、Done、Archived；目前程式只有四種。
@@ -135,13 +145,12 @@
 
 ### 已確認阻塞
 
-- **缺少明確的下一 Sprint 定義**：Repository 只顯示已完成至 Sprint 3C，沒有下一張任務書或已確認優先級。
-- **V2 沒有持久化**：重新整理會還原 mock data，無法作為可持續使用的 MVP。
+- **缺少明確的下一 Sprint 定義**：Sprint 4A 完成後沒有下一張已確認任務書、負責人或優先級。
 - **文件與程式狀態模型不一致**：文件為七種狀態，程式為四種狀態。
 - **文件與程式權重規則不一致**：文件建議 1 / 2 / 5，程式驗證範圍為 1–3。
-- **日期基準寫死**：`store/state-utils.js` 的 `TODAY` 固定為 `2026-07-25`，會使逾期、今日與即將到期結果隨真實日期失準。
 - **角色與 visibility 尚未實作**：目前不能驗證多人資料隔離與角色 Dashboard。
-- **缺少瀏覽器與響應式驗證證據**：現有測試只涵蓋 Node 狀態邏輯。
+- **Repository 僅支援同步 contract**：目前 store 與 actions 是同步流程，不能直接替換為非同步 Supabase repository；未來需另行設計 async initialization、save 狀態、錯誤回復與競態處理。
+- **瀏覽器驗證仍是 smoke test**：尚未建立自動化 DOM、390px 響應式或 accessibility regression suite。
 
 ### 資訊不足
 
@@ -151,19 +160,15 @@
 - V1 真實使用者資料格式、資料量與 migration 樣本：`Unknown`。
 - Sprint owner、時程、release date 與成功指標：`Unknown`。
 - `README.md` 不存在；啟動與驗收流程未集中記錄。
+- `package.json` 不存在；目前以 Node 24 原生 ESM 直接執行 `.js` 測試，沒有集中 test script。
 
 ## 七、下一步（Next Action）
 
 建議只先進行一個決策型動作：
 
-1. 由產品／技術負責人確認「下一 Sprint 是否以完成 Roadmap Phase 1 為目標」。
-2. 若確認，先建立可驗收的 Sprint 規格，不直接串 Supabase：
-   - 定義 repository / adapter 邊界。
-   - 決定 V2 本機持久化 key 與 V1 key 的隔離方式。
-   - 建立 V1 migration fixture、preview 與 dry-run 驗收案例。
-   - 統一 task status、weight 與日期基準。
-   - 補 V1 regression、V2 store、DOM interaction 與 390px 驗收。
-3. Phase 1 通過後，再決定 Phase 2 Supabase staging、schema 與 RLS 的實作排程。
+1. 人工驗收 Sprint 4A 的 repository contract、fallback 與 V1 preview 邊界。
+2. 決定 Phase 1 下一 Sprint 是先做 V1 匯出／完整 dry run，或補 DOM interaction 與 390px 自動驗收。
+3. Phase 1 通過後，再獨立設計非同步 Supabase repository；不得把目前同步 adapter 宣稱為可直接替換。
 
 在上述決策完成前，不建議直接建立資料庫、導入 React、覆蓋 V1 `localStorage` 或擴大功能範圍。
 
@@ -178,16 +183,21 @@
 | `V2_TECHNICAL_DESIGN.md` | V2 資料模型、RLS、adapter、migration 與技術風險。 |
 | `V2_IMPLEMENTATION_ROADMAP.md` | Phase 0–7 的交付物、驗收、風險與回退策略。 |
 | `index.html` / `styles.css` / `app.js` | 可使用 `localStorage` 的既有 V1 Dashboard。 |
-| `dashboard.html` / `dashboard.css` / `dashboard-app.js` | 無後端、in-memory 的 V2 Prototype 入口、樣式與互動綁定。 |
+| `dashboard.html` / `dashboard.css` / `dashboard-app.js` | 無後端、使用本機瀏覽器持久化的 V2 Prototype 入口、樣式與互動綁定。 |
 | `data/mock-data.js` | V2 Workspace、Project、Team、User、Task 等 mock 資料。 |
-| `store/store.js` | V2 集中式 in-memory state、dispatch 與 subscription。 |
+| `store/store.js` | V2 store factory、預設 repository 選擇、dispatch、reset 與 subscription。 |
+| `store/repositories.js` | Memory / LocalStorage repository、同步 contract 與 state validation。 |
+| `store/storage-keys.js` | V1 / V2 storage key 與 V2 schema version 的集中定義。 |
+| `store/clock.js` | 系統日期與 fixed clock 邊界。 |
+| `store/migration-preview.js` | 依實際 V1 schema 產生純函式 migration preview。 |
 | `store/actions.js` | 導覽選取及 Task create/update/delete actions。 |
 | `store/selectors.js` | Dashboard 查詢、進度、日期、健康、風險與工作量計算。 |
 | `store/state-utils.js` | clone、日期、狀態常數與 mock data normalization。 |
 | `pages/` | Workspace、Project、Team、Task、My Tasks 頁面與 router。 |
 | `components/` | V2 共用卡片與 UI HTML renderer。 |
 | `tests/state-foundation.test.js` | V2 store、actions、selectors 與刪除關聯清理測試。 |
+| `tests/repository-boundary.test.js` | Sprint 4A adapter、store injection、fallback、migration preview 與 clock 測試。 |
 
 ## 狀態結論
 
-專案不是從零開始：V1 已是可保存資料的個人 Dashboard；V2 已完成規格、UI foundation、集中式狀態與基本 Task lifecycle，最新進度到 Sprint 3C。現在的主要轉折點是把「可操作但重新整理即重置的 Prototype」推進為「資料邊界清楚、可持久化、可遷移且可驗收的 Phase 1」。在下一 Sprint 未被正式確認前，進一步實作方向為 `Unknown`。
+專案不是從零開始：V1 已是可保存資料的個人 Dashboard；V2 已完成規格、UI foundation、基本 Task lifecycle，以及 Sprint 4A 的同步 repository 與本機持久化邊界。下一個轉折點是完成 V1 正式 dry run 邊界與瀏覽器 regression，之後再獨立設計非同步 Supabase 整合。下一 Sprint 的正式範圍與負責人仍為 `Unknown`。
