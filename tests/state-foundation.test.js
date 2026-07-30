@@ -23,6 +23,9 @@ import { getState, subscribe } from '../store/store.js';
 
 const initial = getState();
 const targetTaskId = 'task-checkin-flow';
+assert.equal(initial.schemaVersion, 2);
+assert.deepEqual(initial.orders, []);
+assert.equal(initial.tasks.every((task) => task.orderId === null), true);
 
 const externalState = getState();
 externalState.tasks[0].status = 'done';
@@ -80,6 +83,7 @@ assert.equal(createdTask.teamId, 'team-checkin');
 assert.equal(createdTask.projectId, 'project-summer-camp');
 assert.equal(createdTask.assigneeId, 'user-amy');
 assert.equal(createdTask.ownerId, 'user-amy');
+assert.equal(createdTask.orderId, null);
 assert.equal(createdTask.dueDate, '2026-08-01');
 
 assert.equal(updateTaskStatus(createResult.taskId, 'done').ok, true);
