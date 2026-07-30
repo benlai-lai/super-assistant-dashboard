@@ -38,6 +38,7 @@ export function createTask({ title, teamId, projectId, assigneeId, dueDate = nul
       status: 'not-started',
       ownerId: assigneeId,
       assigneeId,
+      orderId: null,
       dueDate,
       weight: parsedWeight,
       nextAction: 'Define next action',

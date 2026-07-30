@@ -29,6 +29,7 @@ export function normalizeMockData(mockData) {
   const tasks = source.tasks.map((task) => ({
     ...task,
     assigneeId: task.assigneeId || task.ownerId,
+    orderId: task.orderId ?? null,
     dependsOnTaskIds: [...(task.dependsOnTaskIds || [])]
   }));
 
@@ -49,6 +50,7 @@ export function normalizeMockData(mockData) {
     projects: source.projects,
     teams: source.teams,
     tasks,
+    orders: [],
     members: source.users,
     milestones: source.milestones,
     activities,

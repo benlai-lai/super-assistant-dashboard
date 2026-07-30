@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 
 import { createFixedClock, getToday } from '../store/clock.js';
 import { previewV1Migration } from '../store/migration-preview.js';
-import { createLocalStorageRepository, createMemoryRepository } from '../store/repositories.js';
+import { migrateStateToCurrentVersion } from '../store/schema-migrations.js';
+import { createLocalStorageRepository, createMemoryRepository, validateStateShape } from '../store/repositories.js';
 import { V1_STORAGE_KEY, V2_SCHEMA_VERSION, V2_STORAGE_KEY } from '../store/storage-keys.js';
 import { createInitialState, createStore } from '../store/store.js';
 
@@ -36,6 +37,9 @@ const storage = createStorage();
 const localRepository = createLocalStorageRepository({ storage, fallbackStateFactory: makeState });
 assert.equal(localRepository.loadState().details.fallback, true);
 const roundTripState = makeState();
+assert.equal(roundTripState.schemaVersion, 2);
+assert.deepEqual(roundTripState.orders, []);
+assert.equal(roundTripState.tasks.every((task) => task.orderId === null), true);
 roundTripState.tasks[0].title = 'round trip';
 assert.equal(localRepository.saveState(roundTripState).ok, true);
 const loadedRoundTrip = localRepository.loadState();
@@ -62,6 +66,57 @@ const invalidVersionRepository = createLocalStorageRepository({
   fallbackStateFactory: makeState
 });
 assert.equal(invalidVersionRepository.loadState().details.error, 'UNSUPPORTED_SCHEMA_VERSION');
+
+const version1State = structuredClone(makeState());
+version1State.schemaVersion = 1;
+delete version1State.orders;
+version1State.tasks.forEach((task) => delete task.orderId);
+version1State.projects[0].migrationMarker = 'project-preserved';
+version1State.activities[0].migrationMarker = 'activity-preserved';
+const version1Snapshot = structuredClone(version1State);
+const migrated = migrateStateToCurrentVersion(version1State);
+assert.equal(migrated.ok, true);
+assert.equal(migrated.migrated, true);
+assert.equal(migrated.state.schemaVersion, 2);
+assert.deepEqual(migrated.state.orders, []);
+assert.equal(migrated.state.tasks.every((task) => task.orderId === null), true);
+assert.deepEqual(migrated.state.projects, version1Snapshot.projects);
+assert.deepEqual(migrated.state.activities, version1Snapshot.activities);
+assert.deepEqual(
+  migrated.state.tasks.map(({ orderId, ...task }) => task),
+  version1Snapshot.tasks
+);
+assert.deepEqual(version1State, version1Snapshot);
+
+const migrationStorage = createStorage({ [V2_STORAGE_KEY]: JSON.stringify(version1State) });
+const migrationRepository = createLocalStorageRepository({
+  storage: migrationStorage,
+  fallbackStateFactory: makeState
+});
+const migratedLoad = migrationRepository.loadState();
+assert.equal(migratedLoad.ok, true);
+assert.deepEqual(migratedLoad.details, { migrated: true, fromVersion: 1, toVersion: 2 });
+assert.deepEqual(migratedLoad.state.projects, version1Snapshot.projects);
+assert.deepEqual(migratedLoad.state.activities, version1Snapshot.activities);
+assert.equal(migrationRepository.saveState(migratedLoad.state).ok, true);
+const reloadedMigration = migrationRepository.loadState();
+assert.equal(reloadedMigration.ok, true);
+assert.equal(reloadedMigration.details, undefined);
+assert.deepEqual(reloadedMigration.state, migratedLoad.state);
+
+const invalidOrderIdState = makeState();
+invalidOrderIdState.tasks[0].orderId = 42;
+assert.equal(validateStateShape(invalidOrderIdState).error, 'INVALID_STATE_SHAPE');
+
+const unknownMigration = migrateStateToCurrentVersion({ ...makeState(), schemaVersion: 999 });
+assert.equal(unknownMigration.error, 'UNSUPPORTED_SCHEMA_VERSION');
+
+const malformedVersion1State = { ...version1State, tasks: [null] };
+const malformedVersion1Repository = createLocalStorageRepository({
+  storage: createStorage({ [V2_STORAGE_KEY]: JSON.stringify(malformedVersion1State) }),
+  fallbackStateFactory: makeState
+});
+assert.equal(malformedVersion1Repository.loadState().details.error, 'INVALID_STATE_SHAPE');
 
 const calls = { load: 0, save: 0, reset: 0 };
 const spyRepository = {
