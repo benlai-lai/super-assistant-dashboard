@@ -9,6 +9,7 @@
 
 - 核心目標：降低使用者管理想法、任務、行程與專案狀態的認知負擔。
 - V1 是可操作的個人工作 Dashboard，必須保留既有資料與使用方式。
+- 目前唯一執行優先級為 V1 穩定化：先保護既有功能，不新增產品功能，也不擴大 V2。
 - V2 文件將方向擴展為 Workspace 協作平台；正式產品核准狀態仍為 `UNKNOWN`。
 - 目前仍是本機 Prototype，沒有可證實的 Production 後端或正式多人環境。
 
@@ -21,7 +22,7 @@
 - 資料邊界：Memory／LocalStorage repository、V2 獨立 storage key、fallback、state validation 與 fixed clock 測試邊界。
 - V1 migration preview：只預覽可遷移 Task，不會正式匯入或刪除 V1 資料。
 - V2 storage schema 已升到 version 2：新增 `orders` 陣列與 Task `orderId` 相容欄位；目前只有資料格式，沒有訂單履約操作畫面或流程。
-- 2026-08-31 驗證：`state-foundation tests passed`、`repository-boundary tests passed`。
+- 2026-08-31 驗證：`v1-acceptance tests passed`、`state-foundation tests passed`、`repository-boundary tests passed`。
 - 2026-08-31 人工瀏覽器驗收：V1 桌機與 390px 的主要導覽、快速新增、任務狀態及重新載入保存通過；V2 桌機與 390px 的五種頁面、主要導覽、任務建立及重新載入保存通過，未見水平溢出或瀏覽器程式錯誤。
 
 ## 尚未完成或只有部分基礎
@@ -32,7 +33,7 @@
 - 沒有正式 V1 export、完整 mapping、duplicate detection 或 import dry run。
 - 沒有 Supabase Auth、PostgreSQL、RLS、雲端同步或多人資料隔離實作。
 - Repository contract 目前為同步模式，不能宣稱可直接替換成非同步 Supabase repository。
-- 沒有自動化 DOM、390px 響應式、鍵盤操作與 accessibility regression suite。
+- 已有 V1 導覽、快速新增、資料保存與 390px 樣式合約檢查；仍沒有自動化真實 DOM、鍵盤操作與 accessibility regression suite。
 - V1 的報表與設定仍為空白或未開放；V2 的 390px 頂部導覽占用較多首屏空間。
 - V2 完成／重開／刪除的連續人工操作因瀏覽器自動化逾時，結果證據不足，穩定性為 `UNKNOWN`。
 - 訂單履約目前只有 schema migration，沒有產品規格、UI 或完整生命週期。
@@ -45,19 +46,20 @@
 - V1 `localStorage` 必須保留；遷移先 preview／dry run，不自動覆蓋或刪除原資料。
 - 第一階段附件只保存外部 HTTPS 連結 metadata，不以本機路徑共享。
 - 營隊是一個 Project，各工作組是 Team，具體工作是 Task。
+- Dashboard 工作採有界自主執行；本地、可逆、低風險且不改產品決策的技術事項可自主完成，發布與 Production 仍須分開授權。
 
 ## 已確認落差／阻塞
 
 - 文件定義 7 種任務狀態；程式目前只有 4 種。
 - 文件建議任務權重 1／2／5；程式目前接受 1–3。
-- 下一個 Sprint、產品優先級、負責人、期限與完成定義尚未確認。
+- V1 穩定化之後的產品階段、負責人與期限尚未確認。
 - V2 正式產品核准、部署目標、正式網址、瀏覽器支援矩陣：`UNKNOWN`。
 - Supabase 專案、環境、預算、資料治理負責人：`UNKNOWN`。
 - V1 真實資料格式、資料量與 migration 樣本：`UNKNOWN`。
 
 ## 下一個決策點
 
-在開發新功能前，由產品負責人先確認下一階段的唯一目標與驗收邊界。未確認前，不直接建立資料庫、不導入 React、不覆蓋 V1 資料、不擴大訂單功能，也不部署 Production。
+V1 既有功能安全檢查已建立。下一個產品階段尚未確認；本次完成後不自動開始新功能，也不直接建立資料庫、不導入 React、不覆蓋 V1 資料、不擴大訂單功能或部署 Production。
 
 ## 詳細資料按需閱讀
 

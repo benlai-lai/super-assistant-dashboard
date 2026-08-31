@@ -35,6 +35,14 @@
 - V1 `localStorage` 不得覆蓋或刪除；遷移必須先 preview／dry run。
 - 未經明確授權，不串接 Supabase、不部署、不動 Production。
 
+## 有界自主執行
+
+- 在已確認的 Dashboard 目標與範圍內，依 `PLAN → IMPLEMENT → CHECK → FIX → RETEST → COMPLETE` 持續完成工作，不因一般技術選擇或可修正錯誤停下詢問。
+- 本地、可逆、低風險且不改變既有產品決策的檔案安排、測試順序、除錯、必要小型重構與設定調整，由 Codex 自主決定並採最小變更。
+- 涉及產品目的、重大功能或 UX 決策、範圍擴張、其他 Repository、敏感或正式資料、付費服務、Production、不可逆刪除、重大架構遷移、安全／授權／隱私風險時停止並取得人類決策。
+- Commit、push、PR、merge、deploy、publish、release 仍是分開授權；未明確授權不得執行。
+- 同一技術根因最多做兩次最小修正；仍無法排除時回報 `TECHNICAL_BLOCKER`、證據、已嘗試修正、影響與單一建議行動，不擴大範圍。
+
 ## 記憶維護
 
 - 只有重要決策已確認、功能已完成且驗證，或基準版本正式改變時，才更新 `PROJECT_STATUS.md`。
