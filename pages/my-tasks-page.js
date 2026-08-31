@@ -22,6 +22,7 @@ export function renderMyTasksPage(state) {
   const workload = getWorkload(tasks);
 
   return layout({
+    state,
     title: 'My Tasks',
     subtitle: `Focused list for ${user.name}. This is powered by mock user context only.`,
     breadcrumbs: [{ label: 'My Tasks', href: '#/my-tasks' }],

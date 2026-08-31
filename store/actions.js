@@ -1,7 +1,20 @@
 import { dispatch, getState } from './store.js';
-import { isNullableDueDate, TASK_STATUSES } from './state-utils.js';
+import { isNullableDueDate, normalizeVisibility, TASK_STATUSES } from './state-utils.js';
+import { canCreateTask, canWriteTask } from './selectors.js';
 
-export function createTask({ title, teamId, projectId, assigneeId, dueDate = null, weight = 2 }) {
+export function switchCurrentUser(userId) {
+  const state = getState();
+  const user = state.members.find((member) => member.id === userId);
+  if (!user) return { ok: false, error: 'MEMBER_NOT_FOUND' };
+  if (state.currentUserId === userId) return { ok: true, unchanged: true };
+
+  return dispatch((draft) => {
+    draft.currentUserId = userId;
+    return { ok: true, userId };
+  });
+}
+
+export function createTask({ title, teamId, projectId, assigneeId, dueDate = null, weight = 2, visibility = 'team' }) {
   if (!title || typeof title !== 'string' || !title.trim()) {
     return { ok: false, error: 'INVALID_TITLE' };
   }
@@ -20,6 +33,9 @@ export function createTask({ title, teamId, projectId, assigneeId, dueDate = nul
   }
   if (!isNullableDueDate(dueDate)) {
     return { ok: false, error: 'INVALID_DUE_DATE' };
+  }
+  if (!canCreateTask(state, { teamId, projectId, assigneeId })) {
+    return { ok: false, error: 'UNAUTHORIZED_WRITE' };
   }
 
   const parsedWeight = Number(weight);
@@ -43,7 +59,8 @@ export function createTask({ title, teamId, projectId, assigneeId, dueDate = nul
       weight: parsedWeight,
       nextAction: 'Define next action',
       dependsOnTaskIds: [],
-      blocked: false
+      blocked: false,
+      visibility: normalizeVisibility(visibility)
     });
     return { ok: true, taskId: id };
   });
@@ -120,9 +137,11 @@ export function updateTaskStatus(taskId, status) {
   }
 
   const state = getState();
-  if (!state.tasks.some((task) => task.id === taskId)) {
+  const existing = state.tasks.find((task) => task.id === taskId);
+  if (!existing) {
     return { ok: false, error: 'TASK_NOT_FOUND' };
   }
+  if (!canWriteTask(state, existing)) return { ok: false, error: 'UNAUTHORIZED_WRITE' };
 
   return dispatch((draft) => {
     const task = draft.tasks.find((item) => item.id === taskId);
@@ -135,9 +154,11 @@ export function updateTaskStatus(taskId, status) {
 
 export function deleteTask(taskId) {
   const state = getState();
-  if (!state.tasks.some((task) => task.id === taskId)) {
+  const existing = state.tasks.find((task) => task.id === taskId);
+  if (!existing) {
     return { ok: false, error: 'TASK_NOT_FOUND' };
   }
+  if (!canWriteTask(state, existing)) return { ok: false, error: 'UNAUTHORIZED_WRITE' };
 
   return dispatch((draft) => {
     draft.tasks = draft.tasks.filter((task) => task.id !== taskId);
@@ -153,12 +174,14 @@ export function deleteTask(taskId) {
 
 export function updateTaskAssignee(taskId, memberId) {
   const state = getState();
-  if (!state.tasks.some((task) => task.id === taskId)) {
+  const existing = state.tasks.find((task) => task.id === taskId);
+  if (!existing) {
     return { ok: false, error: 'TASK_NOT_FOUND' };
   }
   if (!state.members.some((member) => member.id === memberId)) {
     return { ok: false, error: 'MEMBER_NOT_FOUND' };
   }
+  if (!canWriteTask(state, existing)) return { ok: false, error: 'UNAUTHORIZED_WRITE' };
 
   return dispatch((draft) => {
     const task = draft.tasks.find((item) => item.id === taskId);
@@ -170,12 +193,14 @@ export function updateTaskAssignee(taskId, memberId) {
 
 export function updateTaskDueDate(taskId, dueDate) {
   const state = getState();
-  if (!state.tasks.some((task) => task.id === taskId)) {
+  const existing = state.tasks.find((task) => task.id === taskId);
+  if (!existing) {
     return { ok: false, error: 'TASK_NOT_FOUND' };
   }
   if (!isNullableDueDate(dueDate)) {
     return { ok: false, error: 'INVALID_DUE_DATE' };
   }
+  if (!canWriteTask(state, existing)) return { ok: false, error: 'UNAUTHORIZED_WRITE' };
 
   return dispatch((draft) => {
     const task = draft.tasks.find((item) => item.id === taskId);

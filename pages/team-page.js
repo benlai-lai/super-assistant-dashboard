@@ -7,8 +7,9 @@ import {
   getOverdueTasks,
   getProgress,
   getProjectById,
-  getTasksByTeamId,
   getTeamById,
+  getVisibleTeamTasks,
+  canCreateTask,
   getWorkload,
   getWorkspaceById
 } from '../store/selectors.js';
@@ -17,7 +18,7 @@ export function renderTeamPage(state, teamId) {
   const team = getTeamById(state, teamId) || state.teams[0];
   const project = getProjectById(state, team.projectId) || state.projects[0];
   const workspace = getWorkspaceById(state, project.workspaceId) || state.workspaces[0];
-  const tasks = getTasksByTeamId(state, team.id);
+  const tasks = getVisibleTeamTasks(state, team.id);
   const progress = getProgress(tasks);
   const workload = getWorkload(tasks);
   const lead = getMemberById(state, team.leadId);
@@ -26,6 +27,7 @@ export function renderTeamPage(state, teamId) {
   const overdue = getOverdueTasks(tasks);
 
   return layout({
+    state,
     title: team.name,
     subtitle: 'A focused team dashboard with lightweight task management actions for the prototype.',
     breadcrumbs: [
@@ -33,7 +35,9 @@ export function renderTeamPage(state, teamId) {
       { label: 'Project', href: `#/project/${project.id}` },
       { label: 'Team', href: `#/team/${team.id}` }
     ],
-    actions: '<button class="v2-btn primary" type="button" data-action="toggle-create-task">Create Task</button>',
+    actions: canCreateTask(state, { teamId: team.id, projectId: project.id, assigneeId: state.currentUserId })
+      ? '<button class="v2-btn primary" type="button" data-action="toggle-create-task">Create Task</button>'
+      : '<span class="v2-readonly-note">Read-only for this mock user</span>',
     content: `
       <section class="v2-hero-card">
         <div>

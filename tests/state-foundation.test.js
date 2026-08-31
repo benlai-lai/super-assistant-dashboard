@@ -3,22 +3,34 @@ import assert from 'node:assert/strict';
 import {
   createTask,
   deleteTask,
+  switchCurrentUser,
   updateTaskAssignee,
   updateTaskDueDate,
   updateTaskStatus
 } from '../store/actions.js';
+import { projectCard, teamCard } from '../components/cards.js';
 import {
+  canReadTask,
+  canWriteTask,
   getDependencyTasks,
   getActivitiesByTaskId,
   getAttachmentsByTaskId,
+  getCurrentUser,
   getDueSoonTasks,
   getOverdueTasks,
   getProgress,
   getProjectTasks,
+  getRisk,
   getTaskById,
   getTasksByTeamId,
+  getVisibleAttachmentsByTaskId,
+  getVisibleProjectTasks,
+  getVisibleTasks,
+  getVisibleTeamTasks,
+  getVisibleWorkspaceTasks,
   getTodayTasks
 } from '../store/selectors.js';
+import { TASK_STATUSES, VISIBILITY_LEVELS } from '../store/state-utils.js';
 import { getState, subscribe } from '../store/store.js';
 
 const initial = getState();
@@ -26,6 +38,10 @@ const targetTaskId = 'task-checkin-flow';
 assert.equal(initial.schemaVersion, 2);
 assert.deepEqual(initial.orders, []);
 assert.equal(initial.tasks.every((task) => task.orderId === null), true);
+assert.deepEqual(TASK_STATUSES, ['not-started', 'in-progress', 'blocked', 'done']);
+assert.deepEqual(VISIBILITY_LEVELS, ['private', 'assigned', 'team', 'project', 'workspace']);
+assert.equal(initial.tasks.every((task) => VISIBILITY_LEVELS.includes(task.visibility)), true);
+assert.equal(initial.attachments.every((attachment) => VISIBILITY_LEVELS.includes(attachment.visibility)), true);
 
 const externalState = getState();
 externalState.tasks[0].status = 'done';
@@ -151,5 +167,76 @@ const missingDependencyState = {
 assert.deepEqual(getDependencyTasks(missingDependencyState, missingDependencyState.tasks[0]), []);
 
 assert.deepEqual(getProgress([]), { completed: 0, total: 0, percent: 0 });
+
+const visibilityFixture = structuredClone(initial);
+const privateTask = getTaskById(visibilityFixture, 'task-discussion-questions');
+assert.equal(canReadTask(visibilityFixture, privateTask, 'user-fiona'), false);
+assert.equal(canReadTask(visibilityFixture, { ...privateTask, visibility: 'invalid' }, 'user-fiona'), false);
+assert.equal(canReadTask(visibilityFixture, { ...privateTask, visibility: undefined }, 'user-fiona'), false);
+assert.equal(canReadTask(visibilityFixture, privateTask, 'user-chris'), true);
+assert.equal(canReadTask(visibilityFixture, getTaskById(visibilityFixture, 'task-handout-print'), 'user-dora'), true);
+assert.equal(canReadTask(visibilityFixture, getTaskById(visibilityFixture, 'task-day-one-handout'), 'user-chris'), true);
+assert.equal(canReadTask(visibilityFixture, getTaskById(visibilityFixture, 'task-attendee-list'), 'user-fiona'), true);
+assert.equal(canReadTask(visibilityFixture, getTaskById(visibilityFixture, 'task-projector'), 'user-fiona'), true);
+
+assert.equal(getVisibleTasks(visibilityFixture, 'user-amy').length, visibilityFixture.tasks.length);
+assert.equal(getVisibleWorkspaceTasks(visibilityFixture, 'workspace-camp', 'user-grace').length, visibilityFixture.tasks.length);
+assert.equal(getVisibleProjectTasks(visibilityFixture, 'project-summer-camp', 'user-ben').length, visibilityFixture.tasks.length);
+assert.deepEqual(
+  getVisibleTeamTasks(visibilityFixture, 'team-teaching', 'user-chris').map((task) => task.id).sort(),
+  ['task-day-one-handout', 'task-discussion-questions', 'task-handout-print']
+);
+assert.equal(getVisibleTeamTasks(visibilityFixture, 'team-equipment', 'user-chris').length, 0);
+assert.equal(getVisibleAttachmentsByTaskId(visibilityFixture, 'task-discussion-questions', 'user-fiona').length, 0);
+assert.equal(getVisibleAttachmentsByTaskId(visibilityFixture, 'task-discussion-questions', 'user-chris').length, 1);
+
+assert.equal(switchCurrentUser('user-fiona').ok, true);
+assert.equal(getCurrentUser(getState()).role, 'Viewer');
+assert.deepEqual(updateTaskStatus('task-cables', 'done'), { ok: false, error: 'UNAUTHORIZED_WRITE' });
+assert.equal(getTaskById(getState(), 'task-cables').status, 'not-started');
+
+assert.equal(switchCurrentUser('user-dora').ok, true);
+assert.deepEqual(updateTaskStatus('task-day-one-handout', 'done'), { ok: false, error: 'UNAUTHORIZED_WRITE' });
+assert.equal(updateTaskStatus('task-handout-print', 'in-progress').ok, true);
+
+assert.equal(switchCurrentUser('user-chris').ok, true);
+assert.equal(updateTaskStatus('task-day-one-handout', 'done').ok, true);
+assert.deepEqual(updateTaskStatus('task-sound-list', 'in-progress'), { ok: false, error: 'UNAUTHORIZED_WRITE' });
+
+assert.equal(switchCurrentUser('user-ben').ok, true);
+assert.equal(updateTaskStatus('task-sound-list', 'done').ok, true);
+assert.equal(switchCurrentUser('user-amy').ok, true);
+
+const cardProject = visibilityFixture.projects[0];
+const cardTasks = getVisibleProjectTasks(visibilityFixture, cardProject.id, 'user-amy');
+const projectCardHtml = projectCard({
+  ...cardProject,
+  projectName: cardProject.name,
+  teamName: 'All teams',
+  progress: getProgress(cardTasks),
+  riskStatus: getRisk(cardProject, cardTasks).display,
+  ownerName: 'Ben Lin',
+  dueDate: cardProject.dueDate
+});
+const cardTeam = visibilityFixture.teams.find((team) => team.id === 'team-traffic');
+const teamTasks = getVisibleTeamTasks(visibilityFixture, cardTeam.id, 'user-amy');
+const teamCardHtml = teamCard({
+  ...cardTeam,
+  projectName: cardProject.name,
+  teamName: cardTeam.name,
+  progress: getProgress(teamTasks),
+  riskStatus: getRisk(cardProject, teamTasks).display,
+  ownerName: 'Fiona Tsai',
+  dueDate: null
+});
+for (const required of ['Project name', 'Team name', 'Progress percentage', 'Completed / total tasks', 'Next action', 'Risk status', 'Owner', 'Due date']) {
+  assert.match(projectCardHtml, new RegExp(required));
+  assert.match(teamCardHtml, new RegExp(required));
+}
+assert.match(projectCardHtml, /data-card-fields="project-name,team-name,progress-percentage,task-count,next-action,risk-status,owner,due-date"/);
+assert.match(teamCardHtml, /未分組|Traffic Team/);
+assert.match(teamCardHtml, /<dd>—<\/dd>/);
+assert.doesNotMatch(projectCardHtml, /user-ben/);
+assert.doesNotMatch(teamCardHtml, /user-fiona/);
 
 console.log('state-foundation tests passed');

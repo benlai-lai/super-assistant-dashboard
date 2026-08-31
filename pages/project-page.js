@@ -9,9 +9,11 @@ import {
   getOverdueTasks,
   getProgress,
   getProjectById,
-  getProjectTasks,
   getRisk,
   getTeamsByProjectId,
+  getVisibleProjectTasks,
+  getVisibleTeamTasks,
+  getVisibleTeamsByProjectId,
   getWorkspaceById,
   getWorkload
 } from '../store/selectors.js';
@@ -19,8 +21,8 @@ import {
 export function renderProjectPage(state, projectId) {
   const project = getProjectById(state, projectId) || state.projects[0];
   const workspace = getWorkspaceById(state, project.workspaceId) || state.workspaces[0];
-  const teams = getTeamsByProjectId(state, project.id);
-  const tasks = getProjectTasks(state, project.id);
+  const teams = getVisibleTeamsByProjectId(state, project.id);
+  const tasks = getVisibleProjectTasks(state, project.id);
   const progress = getProgress(tasks);
   const health = getHealth(project, tasks);
   const risk = getRisk(project, tasks);
@@ -31,6 +33,7 @@ export function renderProjectPage(state, projectId) {
   const overdueTasks = getOverdueTasks(tasks);
 
   return layout({
+    state,
     title: project.name,
     subtitle: project.description,
     breadcrumbs: [
@@ -87,12 +90,19 @@ export function renderProjectPage(state, projectId) {
 }
 
 function toTeamCard(state, team) {
-  const tasks = state.tasks.filter((task) => task.teamId === team.id);
+  const project = getProjectById(state, team.projectId);
+  const tasks = getVisibleTeamTasks(state, team.id);
+  const risk = getRisk(project, tasks);
   return {
     ...team,
+    projectName: project?.name || 'Unknown project',
+    teamName: team.name || '未分組',
+    ownerName: getMemberById(state, team.leadId).name,
+    dueDate: project?.dueDate || null,
     leadName: getMemberById(state, team.leadId).name,
     progress: getProgress(tasks),
     workload: getWorkload(tasks),
+    riskStatus: risk.display,
     blockedCount: getBlockedTasks(tasks).length
   };
 }
