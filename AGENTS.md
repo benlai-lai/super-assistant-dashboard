@@ -35,6 +35,30 @@
 - V1 `localStorage` 不得覆蓋或刪除；遷移必須先 preview／dry run。
 - 未經明確授權，不串接 Supabase、不部署、不動 Production。
 
+## 預設回覆順序
+
+除非使用者明確要求不同格式，Dashboard 專案回覆固定先給老闆看得懂的白話結果，再給技術證據。
+
+第一層：白話結果，只回答：
+
+1. 現在成功還是失敗？
+2. 這次做了什麼？
+3. 有沒有卡住？
+4. 下一步需不需要人類決定？
+
+如果需要人類決定，最多提供 2～3 個白話選項，並標示 Codex 的建議。
+
+第二層：技術證據，放在白話結果之後；只有任務需要時才列出 commit SHA、branch、changed files、test evidence、hash、Git ancestry、browser validation 或其他工程證據。
+
+不要把技術證據放在主要結論之前。
+
+## Token 使用原則
+
+- 每次只讀最小必要入口規則與目前專案狀態。
+- 不因例行任務重讀全部歷史 acceptance report。
+- 詳細 evidence 只有任務需要時才讀。
+- 已確認的結論不要重新分析；只在相關狀態可能變動時重新驗證。
+
 ## 有界自主執行
 
 - 在已確認的 Dashboard 目標與範圍內，依 `PLAN → IMPLEMENT → CHECK → FIX → RETEST → COMPLETE` 持續完成工作，不因一般技術選擇或可修正錯誤停下詢問。
