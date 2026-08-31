@@ -1,6 +1,7 @@
 import { badge, emptyState, escapeHtml, layout, statusLabel, weightLabel } from '../components/ui.js';
 import {
   getActivitiesByTaskId,
+  getAvailableDependencyTasks,
   getBlockingTasks,
   getDependencyTasks,
   getProjectById,
@@ -9,6 +10,7 @@ import {
   getVisibleTaskById,
   canReadTask,
   canWriteTask,
+  canWriteAttachment,
   getWorkspaceById
 } from '../store/selectors.js';
 import { TASK_STATUSES } from '../store/state-utils.js';
@@ -21,6 +23,7 @@ export function renderTaskPage(state, taskId) {
   const project = getProjectById(state, task.projectId) || state.projects[0];
   const workspace = getWorkspaceById(state, project.workspaceId) || state.workspaces[0];
   const dependencies = getDependencyTasks(state, task);
+  const availableDependencies = getAvailableDependencyTasks(state, task.id);
   const blocking = getBlockingTasks(state, task.id);
   const links = getVisibleAttachmentsByTaskId(state, task.id);
   const activity = getActivitiesByTaskId(state, task.id);
@@ -44,19 +47,29 @@ export function renderTaskPage(state, taskId) {
             ${badge(statusLabel(task.status), task.status === 'blocked' || task.blocked ? 'danger' : task.status === 'done' ? 'good' : 'neutral')}
           </div>
           <dl class="v2-detail-list">
+            <div><dt>Title</dt><dd>${renderTextControl(state, task, 'title', task.title)}</dd></div>
             <div><dt>Status</dt><dd>${renderStatusControl(state, task)}</dd></div>
             <div><dt>Owner</dt><dd>${renderAssigneeControl(state, task, state.members)}</dd></div>
             <div><dt>Team</dt><dd>${escapeHtml(team.name)}</dd></div>
             <div><dt>Due Date</dt><dd>${renderDueDateControl(state, task)}</dd></div>
             <div><dt>Size</dt><dd>${escapeHtml(weightLabel(task.weight))} (${task.weight} points)</dd></div>
-            <div><dt>Next Action</dt><dd>${escapeHtml(task.nextAction)}</dd></div>
+            <div><dt>Visibility</dt><dd>${renderVisibilityControl(state, task)}</dd></div>
+            <div><dt>Next Action</dt><dd>${renderTextControl(state, task, 'nextAction', task.nextAction || '')}</dd></div>
+            <div><dt>Risk</dt><dd>${renderRiskControl(state, task)}</dd></div>
+            <div><dt>Description</dt><dd>${renderTextControl(state, task, 'description', task.description || '', true)}</dd></div>
             ${task.blocked ? `<div><dt>Blocked Reason</dt><dd>${escapeHtml(task.blockedReason || 'Blocked by current status.')}</dd></div>` : ''}
           </dl>
         </article>
         <aside class="v2-card">
           <h2>Dependencies</h2>
+          ${renderDependencyForm(state, task, availableDependencies)}
           <h3>Depends on</h3>
-          ${dependencies.map((item) => `<a class="v2-list-link" href="#/task/${item.id}">${escapeHtml(item.title)}</a>`).join('') || emptyState('No dependencies', 'This task can proceed independently.')}
+          ${dependencies.map((item) => `
+            <div class="v2-list-link">
+              <a href="#/task/${item.id}">${escapeHtml(item.title)}</a>
+              ${canWriteTask(state, task) ? `<button class="v2-inline-danger" type="button" data-action="remove-task-dependency" data-task-id="${escapeHtml(task.id)}" data-dependency-task-id="${escapeHtml(item.id)}">Remove</button>` : ''}
+            </div>
+          `).join('') || emptyState('No dependencies', 'This task can proceed independently.')}
           <h3>Blocking</h3>
           ${blocking.map((item) => `<a class="v2-list-link" href="#/task/${item.id}">${escapeHtml(item.title)}</a>`).join('') || emptyState('Blocking none', 'No downstream tasks wait on this task.')}
         </aside>
@@ -64,11 +77,15 @@ export function renderTaskPage(state, taskId) {
       <section class="v2-two-column">
         <div class="v2-card">
           <h2>External Links</h2>
+          ${renderExternalLinkForm(state, task)}
           ${links.map((link) => `
-            <a class="v2-list-link" href="${escapeHtml(link.url)}" target="_blank" rel="noreferrer">
-              <strong>${escapeHtml(link.title)}</strong>
-              <span>${escapeHtml(link.type)} - ${escapeHtml(link.note)}</span>
-            </a>
+            <div class="v2-list-link">
+              <a href="${escapeHtml(link.url)}" target="_blank" rel="noreferrer">
+                <strong>${escapeHtml(link.title)}</strong>
+                <span>${escapeHtml(link.type)} - ${escapeHtml(link.note)}</span>
+              </a>
+              ${canWriteAttachment(state, link) ? renderExternalLinkEditForm(link) : ''}
+            </div>
           `).join('') || emptyState('No external links', 'Phase 1 stores links only. Files remain in the original cloud service.')}
         </div>
         <div class="v2-card">
@@ -94,6 +111,92 @@ function renderStatusControl(state, task) {
       </select>
     </label>
   `;
+}
+
+function renderVisibilityControl(state, task) {
+  if (!canWriteTask(state, task)) return escapeHtml(task.visibility || 'private');
+  return `
+    <label class="v2-status-control">
+      <span class="sr-only">Task visibility</span>
+      <select data-action="update-task-field" data-task-id="${escapeHtml(task.id)}" data-field="visibility">
+        ${visibilityOptions(task.visibility || 'private')}
+      </select>
+    </label>
+  `;
+}
+
+function renderRiskControl(state, task) {
+  if (!canWriteTask(state, task)) return escapeHtml(task.riskStatus || 'Low');
+  return `
+    <label class="v2-status-control">
+      <span class="sr-only">Task risk</span>
+      <select data-action="update-task-field" data-task-id="${escapeHtml(task.id)}" data-field="riskStatus">
+        ${['Low', 'Medium', 'High'].map((value) => `<option value="${value}" ${value === (task.riskStatus || 'Low') ? 'selected' : ''}>${value}</option>`).join('')}
+      </select>
+    </label>
+  `;
+}
+
+function renderTextControl(state, task, field, value, multiline = false) {
+  if (!canWriteTask(state, task)) return escapeHtml(value || '—');
+  if (multiline) {
+    return `<textarea class="v2-inline-input" data-action="update-task-field" data-task-id="${escapeHtml(task.id)}" data-field="${escapeHtml(field)}" rows="3">${escapeHtml(value)}</textarea>`;
+  }
+  return `<input class="v2-inline-input" type="text" data-action="update-task-field" data-task-id="${escapeHtml(task.id)}" data-field="${escapeHtml(field)}" value="${escapeHtml(value)}">`;
+}
+
+function renderDependencyForm(state, task, options) {
+  if (!canWriteTask(state, task)) return '';
+  return `
+    <form data-action="add-task-dependency" class="v2-form compact">
+      <input type="hidden" name="taskId" value="${escapeHtml(task.id)}">
+      <label>
+        <span>Add dependency</span>
+        <select name="dependencyTaskId" ${options.length ? '' : 'disabled'}>
+          ${options.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.title)}</option>`).join('')}
+        </select>
+      </label>
+      <button type="submit" class="v2-btn" ${options.length ? '' : 'disabled'}>Add</button>
+    </form>
+  `;
+}
+
+function renderExternalLinkForm(state, task) {
+  if (!canWriteTask(state, task)) return '';
+  return `
+    <form data-action="add-external-link" class="v2-form compact">
+      <input type="hidden" name="taskId" value="${escapeHtml(task.id)}">
+      <label><span>Title</span><input type="text" name="title" required></label>
+      <label><span>Type</span><input type="text" name="type" value="External Link"></label>
+      <label><span>URL</span><input type="url" name="url" placeholder="https://example.com" required></label>
+      <label><span>Note</span><input type="text" name="note"></label>
+      <label><span>Visibility</span><select name="visibility">${visibilityOptions(task.visibility || 'team')}</select></label>
+      <button type="submit" class="v2-btn">Add Link</button>
+    </form>
+  `;
+}
+
+function renderExternalLinkEditForm(link) {
+  return `
+    <form data-action="edit-external-link" class="v2-form compact">
+      <input type="hidden" name="attachmentId" value="${escapeHtml(link.id)}">
+      <label><span>Title</span><input type="text" name="title" value="${escapeHtml(link.title)}" required></label>
+      <label><span>Type</span><input type="text" name="type" value="${escapeHtml(link.type || 'External Link')}"></label>
+      <label><span>URL</span><input type="url" name="url" value="${escapeHtml(link.url)}" required></label>
+      <label><span>Note</span><input type="text" name="note" value="${escapeHtml(link.note || '')}"></label>
+      <label><span>Visibility</span><select name="visibility">${visibilityOptions(link.visibility || 'private')}</select></label>
+      <div class="v2-form-actions">
+        <button type="submit" class="v2-btn">Save Link</button>
+        <button type="button" class="v2-btn danger" data-action="remove-external-link" data-attachment-id="${escapeHtml(link.id)}">Remove</button>
+      </div>
+    </form>
+  `;
+}
+
+function visibilityOptions(selected) {
+  return ['private', 'assigned', 'team', 'project', 'workspace']
+    .map((value) => `<option value="${value}" ${value === selected ? 'selected' : ''}>${value}</option>`)
+    .join('');
 }
 
 function renderTaskActions(state, task, team) {

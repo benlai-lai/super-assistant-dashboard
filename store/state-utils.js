@@ -30,6 +30,23 @@ export function isNullableDueDate(value) {
   return value === null || isValidDateString(value);
 }
 
+export function isValidVisibility(value) {
+  return VISIBILITY_LEVELS.includes(value);
+}
+
+export function isExternalUrl(value) {
+  try {
+    const url = new URL(String(value));
+    return url.protocol === 'https:' || url.protocol === 'http:';
+  } catch (error) {
+    return false;
+  }
+}
+
+export function normalizeText(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
 export function normalizeMockData(mockData) {
   const source = cloneState(mockData);
   const tasks = source.tasks.map((task) => ({

@@ -1,6 +1,7 @@
 import { projectCard } from '../components/cards.js';
-import { emptyState, layout } from '../components/ui.js';
+import { emptyState, escapeHtml, layout } from '../components/ui.js';
 import {
+  canCreateProject,
   getBlockedTasks,
   getDueSoonTasks,
   getHealth,
@@ -29,7 +30,9 @@ export function renderWorkspacePage(state, workspaceId) {
     title: workspace.name,
     subtitle: workspace.description,
     breadcrumbs: [{ label: 'Workspace', href: `#/workspace/${workspace.id}` }],
-    actions: '<a class="v2-btn" href="#/my-tasks">My Tasks</a>',
+    actions: canCreateProject(state, workspace.id)
+      ? '<button class="v2-btn primary" type="button" data-action="toggle-create-project">Create Project</button><a class="v2-btn" href="#/my-tasks">My Tasks</a>'
+      : '<a class="v2-btn" href="#/my-tasks">My Tasks</a>',
     content: `
       <section class="v2-kpis">
         <div><span>Workspace Progress</span><strong>${progress.percent}%</strong></div>
@@ -40,6 +43,7 @@ export function renderWorkspacePage(state, workspaceId) {
       </section>
 
       <section class="v2-section">
+        ${renderCreateProjectPanel(state, workspace)}
         <div class="v2-section-head">
           <h2>Projects</h2>
           <p>Open a project to review team progress, milestones, risk, and next actions.</p>
@@ -50,6 +54,27 @@ export function renderWorkspacePage(state, workspaceId) {
       </section>
     `
   });
+}
+
+function renderCreateProjectPanel(state, workspace) {
+  if (!canCreateProject(state, workspace.id)) return '';
+  return `
+    <section class="v2-card v2-collapsible-panel" id="create-project-panel" hidden>
+      <h2>New Project</h2>
+      <form data-action="create-project" class="v2-form">
+        <label><span>Project name</span><input type="text" name="name" required></label>
+        <label><span>Description</span><textarea name="description" rows="3"></textarea></label>
+        <label><span>Owner</span><select name="ownerId" required>${state.members.map((member) => `<option value="${escapeHtml(member.id)}">${escapeHtml(member.name)} — ${escapeHtml(member.role)}</option>`).join('')}</select></label>
+        <label><span>Start date</span><input type="date" name="startDate"></label>
+        <label><span>Due date</span><input type="date" name="dueDate"></label>
+        <label><span>Next action</span><input type="text" name="nextAction"></label>
+        <label><span>Risk</span><select name="riskLevelManual"><option value="">Auto</option><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option></select></label>
+        <label><span>Visibility</span><select name="visibility"><option value="workspace">workspace</option><option value="project">project</option><option value="team">team</option><option value="assigned">assigned</option><option value="private">private</option></select></label>
+        <input type="hidden" name="workspaceId" value="${escapeHtml(workspace.id)}">
+        <button type="submit" class="v2-btn primary">Create Project</button>
+      </form>
+    </section>
+  `;
 }
 
 function toProjectCard(state, project) {

@@ -143,6 +143,17 @@ export function getDependencyTasks(state, task) {
   return task.dependsOnTaskIds.map((id) => getTaskById(state, id)).filter((item) => item && canReadTask(state, item));
 }
 
+export function getAvailableDependencyTasks(state, taskId, userId = state.currentUserId) {
+  const task = getTaskById(state, taskId);
+  if (!task || !canReadTask(state, task, userId)) return [];
+  return state.tasks.filter((candidate) => (
+    candidate.id !== task.id
+    && candidate.projectId === task.projectId
+    && !task.dependsOnTaskIds.includes(candidate.id)
+    && canReadTask(state, candidate, userId)
+  ));
+}
+
 export function getBlockingTasks(state, taskId) {
   return state.tasks.filter((task) => task.dependsOnTaskIds.includes(taskId) && canReadTask(state, task));
 }
@@ -299,6 +310,13 @@ export function canWriteTask(state, task, userId = state.currentUserId) {
   return false;
 }
 
+export function canWriteAttachment(state, attachment, userId = state.currentUserId) {
+  if (!attachment) return false;
+  const task = attachment.taskId ? getTaskById(state, attachment.taskId) : null;
+  if (!task) return false;
+  return canReadAttachment(state, attachment, userId) && canWriteTask(state, task, userId);
+}
+
 export function canCreateTask(state, { teamId, projectId, assigneeId }, userId = state.currentUserId) {
   const user = getMemberById(state, userId);
   if (user.role === 'Viewer') return false;
@@ -308,10 +326,23 @@ export function canCreateTask(state, { teamId, projectId, assigneeId }, userId =
   return user.role === 'Member' && assigneeId === userId && isSameTeam(state, teamId, userId);
 }
 
+export function canCreateProject(state, workspaceId, userId = state.currentUserId) {
+  const workspace = getWorkspaceById(state, workspaceId);
+  const user = getMemberById(state, userId);
+  if (!workspace || user.role === 'Viewer') return false;
+  return isWorkspaceManager(user) && workspace.id === state.selectedWorkspaceId;
+}
+
+export function canCreateTeam(state, { projectId }, userId = state.currentUserId) {
+  const project = getProjectById(state, projectId);
+  if (!project) return false;
+  return canManageProject(state, project, userId);
+}
+
 export function canManageProject(state, project, userId = state.currentUserId) {
   if (!project) return false;
   const user = getMemberById(state, userId);
-  if (isWorkspaceManager(user)) return true;
+  if (isWorkspaceManager(user)) return project.workspaceId === state.selectedWorkspaceId;
   return user.role === 'Project Manager' && project.ownerId === userId;
 }
 

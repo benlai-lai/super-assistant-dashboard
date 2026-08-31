@@ -2,6 +2,8 @@ import { taskRow, teamCard } from '../components/cards.js';
 import { badge, emptyState, escapeHtml, layout, progressBar } from '../components/ui.js';
 import {
   canReadProject,
+  canManageProject,
+  canCreateTeam,
   getBlockedTasks,
   getDueSoonTasks,
   getHealth,
@@ -43,8 +45,11 @@ export function renderProjectPage(state, projectId) {
       { label: 'Workspace', href: `#/workspace/${workspace.id}` },
       { label: 'Project', href: `#/project/${project.id}` }
     ],
-    actions: '<a class="v2-btn" href="#/my-tasks">My Tasks</a>',
+    actions: canManageProject(state, project)
+      ? '<button class="v2-btn primary" type="button" data-action="toggle-edit-project">Edit Project</button><button class="v2-btn" type="button" data-action="toggle-create-team">Create Team</button><a class="v2-btn" href="#/my-tasks">My Tasks</a>'
+      : '<a class="v2-btn" href="#/my-tasks">My Tasks</a>',
     content: `
+      ${renderProjectManagementPanels(state, project)}
       <section class="v2-hero-card">
         <div>
           <span class="v2-eyebrow">Project Health</span>
@@ -90,6 +95,53 @@ export function renderProjectPage(state, projectId) {
       </section>
     `
   });
+}
+
+function renderProjectManagementPanels(state, project) {
+  if (!canManageProject(state, project)) return '';
+  return `
+    <section class="v2-two-column">
+      <div class="v2-card v2-collapsible-panel" id="edit-project-panel" hidden>
+        <h2>Edit Project</h2>
+        <form data-action="edit-project" class="v2-form">
+          <label><span>Project name</span><input type="text" name="name" value="${escapeHtml(project.name)}" required></label>
+          <label><span>Description</span><textarea name="description" rows="3">${escapeHtml(project.description || '')}</textarea></label>
+          <label><span>Owner</span><select name="ownerId" required>${state.members.map((member) => `<option value="${escapeHtml(member.id)}" ${member.id === project.ownerId ? 'selected' : ''}>${escapeHtml(member.name)} — ${escapeHtml(member.role)}</option>`).join('')}</select></label>
+          <label><span>Start date</span><input type="date" name="startDate" value="${escapeHtml(project.startDate || '')}"></label>
+          <label><span>Due date</span><input type="date" name="dueDate" value="${escapeHtml(project.dueDate || '')}"></label>
+          <label><span>Next action</span><input type="text" name="nextAction" value="${escapeHtml(project.nextAction || '')}"></label>
+          <label><span>Risk</span><select name="riskLevelManual">${riskOptions(project.riskLevelManual)}</select></label>
+          <label><span>Visibility</span><select name="visibility">${visibilityOptions(project.visibility || 'workspace')}</select></label>
+          <input type="hidden" name="projectId" value="${escapeHtml(project.id)}">
+          <button type="submit" class="v2-btn primary">Save Project</button>
+        </form>
+      </div>
+      <div class="v2-card v2-collapsible-panel" id="create-team-panel" hidden>
+        <h2>New Team</h2>
+        <form data-action="create-team" class="v2-form">
+          <label><span>Team name</span><input type="text" name="name" required></label>
+          <label><span>Lead</span><select name="leadId" required>${state.members.map((member) => `<option value="${escapeHtml(member.id)}">${escapeHtml(member.name)} — ${escapeHtml(member.role)}</option>`).join('')}</select></label>
+          <label><span>Members</span><select name="memberIds" multiple size="5">${state.members.map((member) => `<option value="${escapeHtml(member.id)}">${escapeHtml(member.name)} — ${escapeHtml(member.role)}</option>`).join('')}</select></label>
+          <label><span>Next action</span><input type="text" name="nextAction"></label>
+          <label><span>Visibility</span><select name="visibility">${visibilityOptions('project')}</select></label>
+          <input type="hidden" name="projectId" value="${escapeHtml(project.id)}">
+          <button type="submit" class="v2-btn primary">Create Team</button>
+        </form>
+      </div>
+    </section>
+  `;
+}
+
+function visibilityOptions(selected) {
+  return ['private', 'assigned', 'team', 'project', 'workspace']
+    .map((value) => `<option value="${value}" ${value === selected ? 'selected' : ''}>${value}</option>`)
+    .join('');
+}
+
+function riskOptions(selected) {
+  return ['', 'Low', 'Medium', 'High']
+    .map((value) => `<option value="${value}" ${value === (selected || '') ? 'selected' : ''}>${value || 'Auto'}</option>`)
+    .join('');
 }
 
 function toTeamCard(state, team) {

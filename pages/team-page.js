@@ -2,6 +2,8 @@ import { taskRow } from '../components/cards.js';
 import { badge, emptyState, escapeHtml, layout, progressBar } from '../components/ui.js';
 import {
   canReadTeam,
+  canManageProject,
+  canManageTeam,
   getBlockedTasks,
   getDueSoonTasks,
   getMemberById,
@@ -38,9 +40,11 @@ export function renderTeamPage(state, teamId) {
       { label: 'Project', href: `#/project/${project.id}` },
       { label: 'Team', href: `#/team/${team.id}` }
     ],
-    actions: canCreateTask(state, { teamId: team.id, projectId: project.id, assigneeId: state.currentUserId })
-      ? '<button class="v2-btn primary" type="button" data-action="toggle-create-task">Create Task</button>'
-      : '<span class="v2-readonly-note">Read-only for this mock user</span>',
+    actions: `${canManageTeam(state, team) ? '<button class="v2-btn" type="button" data-action="toggle-edit-team">Edit Team</button>' : ''}${
+      canCreateTask(state, { teamId: team.id, projectId: project.id, assigneeId: state.currentUserId })
+        ? '<button class="v2-btn primary" type="button" data-action="toggle-create-task">Create Task</button>'
+        : '<span class="v2-readonly-note">Read-only for this mock user</span>'
+    }`,
     content: `
       <section class="v2-hero-card">
         <div>
@@ -57,6 +61,7 @@ export function renderTeamPage(state, teamId) {
         <div><span>Blocked</span><strong>${blocked.length}</strong></div>
         <div><span>Workload</span><strong>${workload.status}</strong></div>
       </section>
+      ${renderEditTeamPanel(state, team)}
       <section class="v2-card v2-create-task-panel" id="create-task-panel" hidden>
         <h2>New Task</h2>
         <form data-action="create-task" class="v2-form">
@@ -68,6 +73,16 @@ export function renderTeamPage(state, teamId) {
             <span>Assignee</span>
             <select name="assigneeId" required>
               ${state.members.map((member) => `<option value="${escapeHtml(member.id)}">${escapeHtml(member.name)}</option>`).join('')}
+            </select>
+          </label>
+          <label>
+            <span>Visibility</span>
+            <select name="visibility">
+              <option value="team">team</option>
+              <option value="project">project</option>
+              <option value="workspace">workspace</option>
+              <option value="assigned">assigned</option>
+              <option value="private">private</option>
             </select>
           </label>
           <label>
@@ -92,6 +107,33 @@ export function renderTeamPage(state, teamId) {
       </section>
     `
   });
+}
+
+function renderEditTeamPanel(state, team) {
+  if (!canManageTeam(state, team)) return '';
+  const manageableProjects = state.projects.filter((project) => canManageProject(state, project));
+  const teamMembers = new Set(state.members.filter((member) => member.teamId === team.id).map((member) => member.id));
+  return `
+    <section class="v2-card v2-collapsible-panel" id="edit-team-panel" hidden>
+      <h2>Edit Team</h2>
+      <form data-action="edit-team" class="v2-form">
+        <label><span>Team name</span><input type="text" name="name" value="${escapeHtml(team.name)}" required></label>
+        <label><span>Project</span><select name="projectId" required>${manageableProjects.map((project) => `<option value="${escapeHtml(project.id)}" ${project.id === team.projectId ? 'selected' : ''}>${escapeHtml(project.name)}</option>`).join('')}</select></label>
+        <label><span>Lead</span><select name="leadId" required>${state.members.map((member) => `<option value="${escapeHtml(member.id)}" ${member.id === team.leadId ? 'selected' : ''}>${escapeHtml(member.name)} — ${escapeHtml(member.role)}</option>`).join('')}</select></label>
+        <label><span>Members</span><select name="memberIds" multiple size="5">${state.members.map((member) => `<option value="${escapeHtml(member.id)}" ${teamMembers.has(member.id) ? 'selected' : ''}>${escapeHtml(member.name)} — ${escapeHtml(member.role)}</option>`).join('')}</select></label>
+        <label><span>Next action</span><input type="text" name="nextAction" value="${escapeHtml(team.nextAction || '')}"></label>
+        <label><span>Visibility</span><select name="visibility">${visibilityOptions(team.visibility || 'project')}</select></label>
+        <input type="hidden" name="teamId" value="${escapeHtml(team.id)}">
+        <button type="submit" class="v2-btn primary">Save Team</button>
+      </form>
+    </section>
+  `;
+}
+
+function visibilityOptions(selected) {
+  return ['private', 'assigned', 'team', 'project', 'workspace']
+    .map((value) => `<option value="${value}" ${value === selected ? 'selected' : ''}>${value}</option>`)
+    .join('');
 }
 
 function renderDeniedPage() {
