@@ -49,6 +49,16 @@ assert.equal(localRepository.loadState().state.tasks[0].title, 'round trip');
 assert.equal(localRepository.resetState().ok, true);
 assert.equal(localRepository.loadState().details.error, 'STATE_NOT_FOUND');
 
+const v1Payload = JSON.stringify({ tasks: [{ id: 'v1-task' }], settings: { version: 1 } });
+const isolatedStorage = createStorage({ [V1_STORAGE_KEY]: v1Payload });
+const isolatedRepository = createLocalStorageRepository({ storage: isolatedStorage, fallbackStateFactory: makeState });
+assert.equal(isolatedRepository.saveState(makeState()).ok, true);
+assert.equal(isolatedStorage.getItem(V1_STORAGE_KEY), v1Payload);
+assert.notEqual(isolatedStorage.getItem(V2_STORAGE_KEY), null);
+assert.equal(isolatedRepository.resetState().ok, true);
+assert.equal(isolatedStorage.getItem(V1_STORAGE_KEY), v1Payload);
+assert.equal(isolatedStorage.getItem(V2_STORAGE_KEY), null);
+
 const corruptedRepository = createLocalStorageRepository({
   storage: createStorage({ [V2_STORAGE_KEY]: '{bad json' }),
   fallbackStateFactory: makeState
@@ -189,6 +199,7 @@ const preview = previewV1Migration(v1Input);
 assert.equal(preview.migratableCount, 1);
 assert.equal(preview.unrecognizedItems.length, 2);
 assert.deepEqual(v1Input, v1Snapshot);
+assert.equal(preview.warnings.some((warning) => warning.includes('Preview only')), true);
 assert.equal(V1_STORAGE_KEY, 'superAssistantDashboardData');
 assert.notEqual(V1_STORAGE_KEY, V2_STORAGE_KEY);
 

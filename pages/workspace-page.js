@@ -7,22 +7,25 @@ import {
   getMemberById,
   getOverdueTasks,
   getProgress,
-  getProjectsByWorkspaceId,
+  getVisibleProjectsByWorkspaceId,
+  getVisibleWorkspaceTasks,
   getRisk,
-  getWorkspaceById,
-  getWorkspaceTasks
+  getTeamsByProjectId,
+  getVisibleProjectTasks,
+  getWorkspaceById
 } from '../store/selectors.js';
 
 export function renderWorkspacePage(state, workspaceId) {
   const workspace = getWorkspaceById(state, workspaceId) || state.workspaces[0];
-  const projects = getProjectsByWorkspaceId(state, workspace.id);
-  const workspaceTasks = getWorkspaceTasks(state, workspace.id);
+  const projects = getVisibleProjectsByWorkspaceId(state, workspace.id);
+  const workspaceTasks = getVisibleWorkspaceTasks(state, workspace.id);
   const progress = getProgress(workspaceTasks);
   const overdue = getOverdueTasks(workspaceTasks).length;
   const dueSoon = getDueSoonTasks(workspaceTasks).length;
   const blocked = getBlockedTasks(workspaceTasks).length;
 
   return layout({
+    state,
     title: workspace.name,
     subtitle: workspace.description,
     breadcrumbs: [{ label: 'Workspace', href: `#/workspace/${workspace.id}` }],
@@ -50,13 +53,17 @@ export function renderWorkspacePage(state, workspaceId) {
 }
 
 function toProjectCard(state, project) {
-  const tasks = state.tasks.filter((task) => task.projectId === project.id);
+  const tasks = getVisibleProjectTasks(state, project.id);
+  const teams = getTeamsByProjectId(state, project.id);
   return {
     ...project,
+    projectName: project.name,
+    teamName: teams.length ? `${teams.length} teams` : '未分組',
     ownerName: getMemberById(state, project.ownerId).name,
     progress: getProgress(tasks),
     health: getHealth(project, tasks),
     risk: getRisk(project, tasks),
+    riskStatus: getRisk(project, tasks).display,
     blockedCount: getBlockedTasks(tasks).length
   };
 }

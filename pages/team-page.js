@@ -1,23 +1,27 @@
 import { taskRow } from '../components/cards.js';
 import { badge, emptyState, escapeHtml, layout, progressBar } from '../components/ui.js';
 import {
+  canReadTeam,
   getBlockedTasks,
   getDueSoonTasks,
   getMemberById,
   getOverdueTasks,
   getProgress,
   getProjectById,
-  getTasksByTeamId,
   getTeamById,
+  getVisibleTeamTasks,
+  canCreateTask,
   getWorkload,
   getWorkspaceById
 } from '../store/selectors.js';
 
 export function renderTeamPage(state, teamId) {
-  const team = getTeamById(state, teamId) || state.teams[0];
+  if (!canReadTeam(state, teamId)) return renderDeniedPage(state);
+
+  const team = getTeamById(state, teamId);
   const project = getProjectById(state, team.projectId) || state.projects[0];
   const workspace = getWorkspaceById(state, project.workspaceId) || state.workspaces[0];
-  const tasks = getTasksByTeamId(state, team.id);
+  const tasks = getVisibleTeamTasks(state, team.id);
   const progress = getProgress(tasks);
   const workload = getWorkload(tasks);
   const lead = getMemberById(state, team.leadId);
@@ -26,6 +30,7 @@ export function renderTeamPage(state, teamId) {
   const overdue = getOverdueTasks(tasks);
 
   return layout({
+    state,
     title: team.name,
     subtitle: 'A focused team dashboard with lightweight task management actions for the prototype.',
     breadcrumbs: [
@@ -33,7 +38,9 @@ export function renderTeamPage(state, teamId) {
       { label: 'Project', href: `#/project/${project.id}` },
       { label: 'Team', href: `#/team/${team.id}` }
     ],
-    actions: '<button class="v2-btn primary" type="button" data-action="toggle-create-task">Create Task</button>',
+    actions: canCreateTask(state, { teamId: team.id, projectId: project.id, assigneeId: state.currentUserId })
+      ? '<button class="v2-btn primary" type="button" data-action="toggle-create-task">Create Task</button>'
+      : '<span class="v2-readonly-note">Read-only for this mock user</span>',
     content: `
       <section class="v2-hero-card">
         <div>
@@ -85,6 +92,30 @@ export function renderTeamPage(state, teamId) {
       </section>
     `
   });
+}
+
+function renderDeniedPage() {
+  return `
+    <aside class="v2-sidebar">
+      <div class="v2-brand">Dashboard V2<span>Prototype</span></div>
+      <nav class="v2-nav" aria-label="Prototype navigation">
+        <a href="#/workspace/workspace-camp">Workspace</a>
+        <a href="#/my-tasks">My Tasks</a>
+      </nav>
+      <p class="v2-sidebar-note">Static Vanilla JS prototype with local browser persistence.</p>
+    </aside>
+    <main class="v2-main">
+      <header class="v2-topbar">
+        <div>
+          <div class="v2-crumbs"><a href="#/workspace/workspace-camp">Workspace</a></div>
+          <h1>無法查看此內容</h1>
+          <p>目前選取的 mock user 沒有權限查看此內容，或此內容不存在。</p>
+        </div>
+        <div class="v2-actions"><a class="v2-btn" href="#/workspace/workspace-camp">Back to Workspace</a></div>
+      </header>
+      <section class="v2-card"><h2>無法查看此內容</h2><p>請返回 Workspace，或在可查看頁面切換具備授權的 mock user。</p></section>
+    </main>
+  `;
 }
 
 function toTaskRow(state, task) {

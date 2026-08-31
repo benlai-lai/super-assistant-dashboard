@@ -1,27 +1,32 @@
 import { badge, emptyState, escapeHtml, layout, statusLabel, weightLabel } from '../components/ui.js';
 import {
   getActivitiesByTaskId,
-  getAttachmentsByTaskId,
   getBlockingTasks,
   getDependencyTasks,
   getProjectById,
-  getTaskById,
   getTeamById,
+  getVisibleAttachmentsByTaskId,
+  getVisibleTaskById,
+  canReadTask,
+  canWriteTask,
   getWorkspaceById
 } from '../store/selectors.js';
 import { TASK_STATUSES } from '../store/state-utils.js';
 
 export function renderTaskPage(state, taskId) {
-  const task = getTaskById(state, taskId) || state.tasks[0];
+  if (!canReadTask(state, taskId)) return renderDeniedPage(state);
+
+  const task = getVisibleTaskById(state, taskId);
   const team = getTeamById(state, task.teamId) || state.teams[0];
   const project = getProjectById(state, task.projectId) || state.projects[0];
   const workspace = getWorkspaceById(state, project.workspaceId) || state.workspaces[0];
   const dependencies = getDependencyTasks(state, task);
   const blocking = getBlockingTasks(state, task.id);
-  const links = getAttachmentsByTaskId(state, task.id);
+  const links = getVisibleAttachmentsByTaskId(state, task.id);
   const activity = getActivitiesByTaskId(state, task.id);
 
   return layout({
+    state,
     title: task.title,
     subtitle: 'Task detail page for reviewing ownership, dates, dependencies, blockers, and external links.',
     breadcrumbs: [
@@ -30,7 +35,7 @@ export function renderTaskPage(state, taskId) {
       { label: 'Team', href: `#/team/${team.id}` },
       { label: 'Task', href: `#/task/${task.id}` }
     ],
-    actions: renderTaskActions(task, team),
+    actions: renderTaskActions(state, task, team),
     content: `
       <section class="v2-two-column wide-left">
         <article class="v2-card">
@@ -39,10 +44,10 @@ export function renderTaskPage(state, taskId) {
             ${badge(statusLabel(task.status), task.status === 'blocked' || task.blocked ? 'danger' : task.status === 'done' ? 'good' : 'neutral')}
           </div>
           <dl class="v2-detail-list">
-            <div><dt>Status</dt><dd>${renderStatusControl(task)}</dd></div>
-            <div><dt>Owner</dt><dd>${renderAssigneeControl(task, state.members)}</dd></div>
+            <div><dt>Status</dt><dd>${renderStatusControl(state, task)}</dd></div>
+            <div><dt>Owner</dt><dd>${renderAssigneeControl(state, task, state.members)}</dd></div>
             <div><dt>Team</dt><dd>${escapeHtml(team.name)}</dd></div>
-            <div><dt>Due Date</dt><dd>${renderDueDateControl(task)}</dd></div>
+            <div><dt>Due Date</dt><dd>${renderDueDateControl(state, task)}</dd></div>
             <div><dt>Size</dt><dd>${escapeHtml(weightLabel(task.weight))} (${task.weight} points)</dd></div>
             <div><dt>Next Action</dt><dd>${escapeHtml(task.nextAction)}</dd></div>
             ${task.blocked ? `<div><dt>Blocked Reason</dt><dd>${escapeHtml(task.blockedReason || 'Blocked by current status.')}</dd></div>` : ''}
@@ -79,7 +84,8 @@ export function renderTaskPage(state, taskId) {
   });
 }
 
-function renderStatusControl(task) {
+function renderStatusControl(state, task) {
+  if (!canWriteTask(state, task)) return escapeHtml(statusLabel(task.status));
   return `
     <label class="v2-status-control">
       <span class="sr-only">Task status</span>
@@ -90,7 +96,10 @@ function renderStatusControl(task) {
   `;
 }
 
-function renderTaskActions(task, team) {
+function renderTaskActions(state, task, team) {
+  if (!canWriteTask(state, task)) {
+    return `<a class="v2-btn" href="#/team/${team.id}">Back to Team</a><span class="v2-readonly-note">Read-only for this mock user</span>`;
+  }
   const primaryAction = task.status === 'done'
     ? `<button class="v2-btn" type="button" data-action="reopen-task" data-task-id="${escapeHtml(task.id)}">Reopen Task</button>`
     : `<button class="v2-btn primary" type="button" data-action="complete-task" data-task-id="${escapeHtml(task.id)}">Complete Task</button>`;
@@ -102,7 +111,8 @@ function renderTaskActions(task, team) {
   `;
 }
 
-function renderAssigneeControl(task, members) {
+function renderAssigneeControl(state, task, members) {
+  if (!canWriteTask(state, task)) return escapeHtml(getDisplayOwner(state, task));
   const currentId = task.assigneeId || task.ownerId;
   return `
     <label class="v2-status-control">
@@ -114,11 +124,41 @@ function renderAssigneeControl(task, members) {
   `;
 }
 
-function renderDueDateControl(task) {
+function renderDueDateControl(state, task) {
+  if (!canWriteTask(state, task)) return escapeHtml(task.dueDate || '—');
   return `
     <label class="v2-status-control">
       <span class="sr-only">Task due date</span>
       <input type="date" data-action="update-task-due-date" data-task-id="${escapeHtml(task.id)}" value="${escapeHtml(task.dueDate || '')}">
     </label>
   `;
+}
+
+function renderDeniedPage() {
+  return `
+    <aside class="v2-sidebar">
+      <div class="v2-brand">Dashboard V2<span>Prototype</span></div>
+      <nav class="v2-nav" aria-label="Prototype navigation">
+        <a href="#/workspace/workspace-camp">Workspace</a>
+        <a href="#/my-tasks">My Tasks</a>
+      </nav>
+      <p class="v2-sidebar-note">Static Vanilla JS prototype with local browser persistence.</p>
+    </aside>
+    <main class="v2-main">
+      <header class="v2-topbar">
+        <div>
+          <div class="v2-crumbs"><a href="#/workspace/workspace-camp">Workspace</a></div>
+          <h1>無法查看此內容</h1>
+          <p>目前選取的 mock user 沒有權限查看此內容，或此內容不存在。</p>
+        </div>
+        <div class="v2-actions"><a class="v2-btn" href="#/workspace/workspace-camp">Back to Workspace</a></div>
+      </header>
+      <section class="v2-card"><h2>無法查看此內容</h2><p>請返回 Workspace，或在可查看頁面切換具備授權的 mock user。</p></section>
+    </main>
+  `;
+}
+
+function getDisplayOwner(state, task) {
+  const member = state.members.find((item) => item.id === (task.assigneeId || task.ownerId));
+  return member?.name || 'Unassigned';
 }

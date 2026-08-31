@@ -1,5 +1,5 @@
 import { getToday } from './clock.js';
-import { isValidDate, parseDate } from './state-utils.js';
+import { isValidDate, normalizeVisibility, parseDate } from './state-utils.js';
 
 export function getCurrentUser(state) {
   return getMemberById(state, state.currentUserId);
@@ -13,12 +13,28 @@ export function getProjectsByWorkspaceId(state, workspaceId) {
   return state.projects.filter((project) => project.workspaceId === workspaceId);
 }
 
+export function getVisibleProjectsByWorkspaceId(state, workspaceId, userId = state.currentUserId) {
+  return getProjectsByWorkspaceId(state, workspaceId).filter((project) => {
+    if (!canReadProject(state, project.id, userId)) return false;
+    if (canManageProject(state, project, userId)) return true;
+    return getVisibleProjectTasks(state, project.id, userId).length > 0;
+  });
+}
+
 export function getProjectById(state, projectId) {
   return state.projects.find((project) => project.id === projectId) || null;
 }
 
 export function getTeamsByProjectId(state, projectId) {
   return state.teams.filter((team) => team.projectId === projectId);
+}
+
+export function getVisibleTeamsByProjectId(state, projectId, userId = state.currentUserId) {
+  return getTeamsByProjectId(state, projectId).filter((team) => {
+    if (!canReadTeam(state, team.id, userId)) return false;
+    if (canManageTeam(state, team, userId) || canManageProject(state, getProjectById(state, projectId), userId)) return true;
+    return getVisibleTeamTasks(state, team.id, userId).length > 0;
+  });
 }
 
 export function getTeamById(state, teamId) {
@@ -29,8 +45,17 @@ export function getTasksByTeamId(state, teamId) {
   return state.tasks.filter((task) => task.teamId === teamId);
 }
 
+export function getVisibleTeamTasks(state, teamId, userId = state.currentUserId) {
+  return getTasksByTeamId(state, teamId).filter((task) => canReadTask(state, task, userId));
+}
+
 export function getTaskById(state, taskId) {
   return state.tasks.find((task) => task.id === taskId) || null;
+}
+
+export function getVisibleTaskById(state, taskId, userId = state.currentUserId) {
+  const task = getTaskById(state, taskId);
+  return canReadTask(state, task, userId) ? task : null;
 }
 
 export function getMemberById(state, memberId) {
@@ -45,8 +70,16 @@ export function getAttachmentsByTaskId(state, taskId) {
   return state.attachments.filter((attachment) => attachment.taskId === taskId);
 }
 
+export function getVisibleAttachmentsByTaskId(state, taskId, userId = state.currentUserId) {
+  return getAttachmentsByTaskId(state, taskId).filter((attachment) => canReadAttachment(state, attachment, userId));
+}
+
 export function getMyTasks(state, userId) {
-  return state.tasks.filter((task) => task.assigneeId === userId || task.ownerId === userId);
+  return state.tasks.filter((task) => canReadTask(state, task, userId) && (task.assigneeId === userId || task.ownerId === userId));
+}
+
+export function getVisibleTasks(state, userId = state.currentUserId) {
+  return state.tasks.filter((task) => canReadTask(state, task, userId));
 }
 
 export function getTodayTasks(state, userId, today = getToday()) {
@@ -72,9 +105,17 @@ export function getProjectTasks(state, projectId) {
   return state.tasks.filter((task) => task.projectId === projectId);
 }
 
+export function getVisibleProjectTasks(state, projectId, userId = state.currentUserId) {
+  return getProjectTasks(state, projectId).filter((task) => canReadTask(state, task, userId));
+}
+
 export function getWorkspaceTasks(state, workspaceId) {
   const projectIds = getProjectsByWorkspaceId(state, workspaceId).map((project) => project.id);
   return state.tasks.filter((task) => projectIds.includes(task.projectId));
+}
+
+export function getVisibleWorkspaceTasks(state, workspaceId, userId = state.currentUserId) {
+  return getWorkspaceTasks(state, workspaceId).filter((task) => canReadTask(state, task, userId));
 }
 
 export function getMilestonesByProjectId(state, projectId) {
@@ -99,11 +140,11 @@ export function getBlockedTasks(tasks) {
 }
 
 export function getDependencyTasks(state, task) {
-  return task.dependsOnTaskIds.map((id) => getTaskById(state, id)).filter(Boolean);
+  return task.dependsOnTaskIds.map((id) => getTaskById(state, id)).filter((item) => item && canReadTask(state, item));
 }
 
 export function getBlockingTasks(state, taskId) {
-  return state.tasks.filter((task) => task.dependsOnTaskIds.includes(taskId));
+  return state.tasks.filter((task) => task.dependsOnTaskIds.includes(taskId) && canReadTask(state, task));
 }
 
 export function isTaskDone(task) {
@@ -111,7 +152,7 @@ export function isTaskDone(task) {
 }
 
 export function isTaskOpen(task) {
-  return !['done', 'archived'].includes(task.status);
+  return ['not-started', 'in-progress', 'blocked'].includes(task.status);
 }
 
 export function isTaskDueToday(task, today = getToday()) {
@@ -187,6 +228,127 @@ export function getRisk(project, tasks) {
     reason: project.riskLevelManual ? 'Manual risk override is active.' : computedReason,
     computedReason
   };
+}
+
+export function canReadProject(state, projectId, userId = state.currentUserId) {
+  const project = getProjectById(state, projectId);
+  const user = getKnownMemberById(state, userId);
+  if (!project || !user) return false;
+  if (isWorkspaceManager(user)) return true;
+  if (canManageProject(state, project, userId)) return true;
+
+  const userTeam = getTeamById(state, user.teamId);
+  if (userTeam?.projectId === project.id) return true;
+
+  return getProjectTasks(state, project.id).some((task) => isTaskParticipant(task, userId) && canReadTask(state, task, userId));
+}
+
+export function canReadTeam(state, teamId, userId = state.currentUserId) {
+  const team = getTeamById(state, teamId);
+  const user = getKnownMemberById(state, userId);
+  if (!team || !user) return false;
+  if (isWorkspaceManager(user)) return true;
+  if (canManageProject(state, getProjectById(state, team.projectId), userId)) return true;
+  if (canManageTeam(state, team, userId)) return true;
+  if (user.teamId === team.id) return true;
+
+  return getTasksByTeamId(state, team.id).some((task) => isTaskParticipant(task, userId) && canReadTask(state, task, userId));
+}
+
+export function canReadTask(state, taskOrId, userId = state.currentUserId) {
+  const task = typeof taskOrId === 'string' ? getTaskById(state, taskOrId) : taskOrId;
+  if (!task) return false;
+  const user = getKnownMemberById(state, userId);
+  if (!user) return false;
+  const visibility = normalizeVisibility(task.visibility);
+  if (isWorkspaceManager(user)) return true;
+  if (canManageProject(state, getProjectById(state, task.projectId), userId)) return true;
+  if (canManageTeam(state, getTeamById(state, task.teamId), userId)) return true;
+  if (user.role === 'Team Lead') return isTaskParticipant(task, userId) || isSameTeam(state, task.teamId, userId);
+
+  if (visibility === 'private') return isTaskParticipant(task, userId);
+  if (visibility === 'assigned') return isTaskParticipant(task, userId);
+  if (visibility === 'team') return isSameTeam(state, task.teamId, userId);
+  if (visibility === 'project') return isProjectParticipant(state, task.projectId, userId);
+  if (visibility === 'workspace') return isWorkspaceParticipant(state, task.projectId, userId);
+  return false;
+}
+
+export function canReadAttachment(state, attachment, userId = state.currentUserId) {
+  if (!attachment) return false;
+  const task = attachment.taskId ? getTaskById(state, attachment.taskId) : null;
+  if (task && !canReadTask(state, task, userId)) return false;
+  const visibility = normalizeVisibility(attachment.visibility);
+  if (task) return canReadTask(state, { ...task, visibility }, userId);
+  if (visibility === 'private') return attachment.createdBy === userId || attachment.created_by === userId;
+  if (visibility === 'assigned') return attachment.createdBy === userId || attachment.created_by === userId;
+  if (visibility === 'team') return isSameTeam(state, attachment.teamId, userId);
+  if (visibility === 'project') return isProjectParticipant(state, attachment.projectId, userId);
+  if (visibility === 'workspace') return isWorkspaceParticipant(state, attachment.projectId, userId);
+  return false;
+}
+
+export function canWriteTask(state, task, userId = state.currentUserId) {
+  if (!task) return false;
+  const user = getMemberById(state, userId);
+  if (user.role === 'Viewer') return false;
+  if (isWorkspaceManager(user)) return true;
+  if (canManageProject(state, getProjectById(state, task.projectId), userId)) return true;
+  if (canManageTeam(state, getTeamById(state, task.teamId), userId)) return true;
+  if (user.role === 'Member') return isTaskParticipant(task, userId);
+  return false;
+}
+
+export function canCreateTask(state, { teamId, projectId, assigneeId }, userId = state.currentUserId) {
+  const user = getMemberById(state, userId);
+  if (user.role === 'Viewer') return false;
+  if (isWorkspaceManager(user)) return true;
+  if (canManageProject(state, getProjectById(state, projectId), userId)) return true;
+  if (canManageTeam(state, getTeamById(state, teamId), userId)) return true;
+  return user.role === 'Member' && assigneeId === userId && isSameTeam(state, teamId, userId);
+}
+
+export function canManageProject(state, project, userId = state.currentUserId) {
+  if (!project) return false;
+  const user = getMemberById(state, userId);
+  if (isWorkspaceManager(user)) return true;
+  return user.role === 'Project Manager' && project.ownerId === userId;
+}
+
+export function canManageTeam(state, team, userId = state.currentUserId) {
+  if (!team) return false;
+  const user = getMemberById(state, userId);
+  if (isWorkspaceManager(user)) return true;
+  if (canManageProject(state, getProjectById(state, team.projectId), userId)) return true;
+  return user.role === 'Team Lead' && team.leadId === userId;
+}
+
+function isWorkspaceManager(user) {
+  return user.role === 'Workspace Owner' || user.role === 'Workspace Admin';
+}
+
+function getKnownMemberById(state, memberId) {
+  return state.members.find((member) => member.id === memberId) || null;
+}
+
+function isTaskParticipant(task, userId) {
+  return task.ownerId === userId || task.assigneeId === userId;
+}
+
+function isSameTeam(state, teamId, userId) {
+  const user = getMemberById(state, userId);
+  return Boolean(teamId && user.teamId === teamId);
+}
+
+function isProjectParticipant(state, projectId, userId) {
+  if (!projectId) return false;
+  const user = getMemberById(state, userId);
+  if (canManageProject(state, getProjectById(state, projectId), userId)) return true;
+  return state.teams.some((team) => team.projectId === projectId && team.id === user.teamId);
+}
+
+function isWorkspaceParticipant(state, projectId, userId) {
+  return Boolean(getProjectById(state, projectId) && state.members.some((member) => member.id === userId));
 }
 
 function resolveTaskInput(stateOrTasks, userIdOrToday, maybeToday) {

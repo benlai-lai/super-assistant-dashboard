@@ -94,6 +94,27 @@ select { font: inherit; }
   line-height: 1.5;
 }
 
+.v2-user-switcher {
+  display: grid;
+  gap: 6px;
+  color: #b9c7df;
+  font-size: 12px;
+}
+
+.v2-user-switcher select {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--v2-text);
+  padding: 8px 10px;
+}
+
+.v2-readonly-note {
+  color: var(--v2-muted);
+  font-size: 14px;
+}
+
 .v2-main {
   padding: 28px;
   display: grid;

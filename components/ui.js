@@ -18,6 +18,10 @@ export function statusLabel(status) {
   return labels[status] || status;
 }
 
+export function displayDate(value) {
+  return value || '—';
+}
+
 export function weightLabel(weight = 2) {
   if (weight <= 1) return 'Small';
   if (weight >= 3) return 'Large';
@@ -40,7 +44,20 @@ export function emptyState(title, detail) {
   return `<div class="v2-empty"><strong>${escapeHtml(title)}</strong><p>${escapeHtml(detail)}</p></div>`;
 }
 
-export function layout({ title, subtitle, breadcrumbs = [], actions = '', content }) {
+export function renderUserSwitcher(state) {
+  const current = state.members.find((member) => member.id === state.currentUserId) || state.members[0];
+  return `
+    <label class="v2-user-switcher">
+      <span>Mock user</span>
+      <select data-action="switch-current-user" aria-label="Mock user">
+        ${state.members.map((member) => `<option value="${escapeHtml(member.id)}" ${member.id === current.id ? 'selected' : ''}>${escapeHtml(member.name)} — ${escapeHtml(member.role)}</option>`).join('')}
+      </select>
+    </label>
+  `;
+}
+
+export function layout({ state, title, subtitle, breadcrumbs = [], actions = '', content }) {
+  const switcher = state ? renderUserSwitcher(state) : '';
   return `
     <aside class="v2-sidebar">
       <div class="v2-brand">Dashboard V2<span>Prototype</span></div>
@@ -50,6 +67,7 @@ export function layout({ title, subtitle, breadcrumbs = [], actions = '', conten
         <a href="#/team/team-checkin">Team</a>
         <a href="#/my-tasks">My Tasks</a>
       </nav>
+      ${switcher}
       <p class="v2-sidebar-note">Static Vanilla JS prototype with local browser persistence. No backend, auth, or Supabase.</p>
     </aside>
     <main class="v2-main">

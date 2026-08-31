@@ -1,5 +1,5 @@
 import { renderRoute, syncRouteSelection } from './pages/router.js';
-import { createTask, deleteTask, updateTaskAssignee, updateTaskDueDate, updateTaskStatus } from './store/actions.js';
+import { createTask, deleteTask, switchCurrentUser, updateTaskAssignee, updateTaskDueDate, updateTaskStatus } from './store/actions.js';
 import { getState, subscribe } from './store/store.js';
 
 const app = document.getElementById('app');
@@ -17,6 +17,7 @@ function render() {
   bindTaskLifecycleActions();
   bindTaskDeleteActions();
   bindTaskStatusControls();
+  bindMockUserSwitcher();
   isRendering = false;
 }
 
@@ -61,6 +62,17 @@ function bindCreateTaskForm() {
 
     form.reset();
     if (panel) panel.hidden = true;
+  });
+}
+
+function bindMockUserSwitcher() {
+  app.querySelectorAll('[data-action="switch-current-user"]').forEach((control) => {
+    control.addEventListener('change', (event) => {
+      const result = switchCurrentUser(event.target.value);
+      if (!result.ok) {
+        event.target.dataset.error = result.error;
+      }
+    });
   });
 }
 

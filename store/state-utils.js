@@ -1,9 +1,15 @@
 import { V2_SCHEMA_VERSION } from './storage-keys.js';
 
 export const TASK_STATUSES = ['not-started', 'in-progress', 'blocked', 'done'];
+export const VISIBILITY_LEVELS = ['private', 'assigned', 'team', 'project', 'workspace'];
+export const MOCK_ROLES = ['Workspace Owner', 'Workspace Admin', 'Project Manager', 'Team Lead', 'Member', 'Viewer'];
 
 export function cloneState(value) {
   return structuredClone(value);
+}
+
+export function normalizeVisibility(value) {
+  return VISIBILITY_LEVELS.includes(value) ? value : 'private';
 }
 
 export function parseDate(value) {
@@ -30,6 +36,7 @@ export function normalizeMockData(mockData) {
     ...task,
     assigneeId: task.assigneeId || task.ownerId,
     orderId: task.orderId ?? null,
+    visibility: normalizeVisibility(task.visibility),
     dependsOnTaskIds: [...(task.dependsOnTaskIds || [])]
   }));
 
@@ -40,6 +47,7 @@ export function normalizeMockData(mockData) {
 
   const attachments = source.externalLinks.map((link) => ({
     ...link,
+    visibility: normalizeVisibility(link.visibility),
     created_by: link.createdBy,
     created_at: link.createdAt
   }));
