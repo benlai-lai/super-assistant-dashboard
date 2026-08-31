@@ -2,7 +2,7 @@
 
 - 更新日期：2026-08-31
 - 唯一正式 Repository：`C:\Users\taich\Documents\GitHub\super-assistant-dashboard`
-- 已驗證功能基準（記憶整理前）：`main` / `5508e6d7068e03b165159d8d05e14a68bae8e0ed` / `origin/main`
+- 最新人工驗收基準：`main` / `9d7da6128d321f8095d552d41a3e480fa764e2d8` / `origin/main`
 判定原則：無法由目前程式、文件或驗證確認者，一律標記 `UNKNOWN`。
 
 ## 目前方向
@@ -22,6 +22,7 @@
 - V1 migration preview：只預覽可遷移 Task，不會正式匯入或刪除 V1 資料。
 - V2 storage schema 已升到 version 2：新增 `orders` 陣列與 Task `orderId` 相容欄位；目前只有資料格式，沒有訂單履約操作畫面或流程。
 - 2026-08-31 驗證：`state-foundation tests passed`、`repository-boundary tests passed`。
+- 2026-08-31 人工瀏覽器驗收：V1 桌機與 390px 的主要導覽、快速新增、任務狀態及重新載入保存通過；V2 桌機與 390px 的五種頁面、主要導覽、任務建立及重新載入保存通過，未見水平溢出或瀏覽器程式錯誤。
 
 ## 尚未完成或只有部分基礎
 
@@ -32,6 +33,8 @@
 - 沒有 Supabase Auth、PostgreSQL、RLS、雲端同步或多人資料隔離實作。
 - Repository contract 目前為同步模式，不能宣稱可直接替換成非同步 Supabase repository。
 - 沒有自動化 DOM、390px 響應式、鍵盤操作與 accessibility regression suite。
+- V1 的報表與設定仍為空白或未開放；V2 的 390px 頂部導覽占用較多首屏空間。
+- V2 完成／重開／刪除的連續人工操作因瀏覽器自動化逾時，結果證據不足，穩定性為 `UNKNOWN`。
 - 訂單履約目前只有 schema migration，沒有產品規格、UI 或完整生命週期。
 
 ## 已確認的重要決策
@@ -51,7 +54,6 @@
 - V2 正式產品核准、部署目標、正式網址、瀏覽器支援矩陣：`UNKNOWN`。
 - Supabase 專案、環境、預算、資料治理負責人：`UNKNOWN`。
 - V1 真實資料格式、資料量與 migration 樣本：`UNKNOWN`。
-- 最新桌機與 390px 手機人工驗收結果：`UNKNOWN`。
 
 ## 下一個決策點
 
