@@ -59,7 +59,7 @@ export function getVisibleTaskById(state, taskId, userId = state.currentUserId) 
 }
 
 export function getMemberById(state, memberId) {
-  return state.members.find((member) => member.id === memberId) || { id: memberId, name: 'Unassigned', role: 'Unknown' };
+  return state.members.find((member) => member.id === memberId) || { id: memberId, name: '未指派', role: 'Unknown' };
 }
 
 export function getActivitiesByTaskId(state, taskId) {
@@ -216,27 +216,27 @@ export function getHealth(project, tasks, today = getToday()) {
   const todayDate = parseDate(today);
   const daysUntilDue = isValidDate(dueDate) && isValidDate(todayDate) ? Math.ceil((dueDate - todayDate) / 86400000) : null;
 
-  if (daysUntilDue !== null && daysUntilDue < 0 && progress < 100) return { level: 'Delayed', reason: 'Project due date has passed.' };
-  if (overdueRatio >= 0.25) return { level: 'Delayed', reason: 'More than 25% of open tasks are overdue.' };
-  if (daysUntilDue !== null && daysUntilDue <= 2 && progress < 70) return { level: 'Delayed', reason: 'Due very soon and progress is below 70%.' };
-  if (overdueRatio >= 0.1) return { level: 'High Risk', reason: 'Overdue task ratio is above 10%.' };
-  if (blocked >= 3 || blocked / openTasks >= 0.15) return { level: 'High Risk', reason: 'Blocked tasks need attention.' };
-  if (expected !== null && daysUntilDue !== null && daysUntilDue <= 7 && progress < expected - 20) return { level: 'High Risk', reason: 'Progress is more than 20% behind expected pace.' };
-  if (overdue > 0 || blocked > 0) return { level: 'Attention', reason: 'There are overdue or blocked tasks.' };
-  if (!project.nextAction) return { level: 'Attention', reason: 'No next action is defined.' };
-  return { level: 'Healthy', reason: 'Progress, next action, and task status look on track.' };
+  if (daysUntilDue !== null && daysUntilDue < 0 && progress < 100) return { level: 'Delayed', reason: '專案截止日期已過。' };
+  if (overdueRatio >= 0.25) return { level: 'Delayed', reason: '超過 25% 未完成任務已逾期。' };
+  if (daysUntilDue !== null && daysUntilDue <= 2 && progress < 70) return { level: 'Delayed', reason: '即將到期且進度低於 70%。' };
+  if (overdueRatio >= 0.1) return { level: 'High Risk', reason: '逾期任務比例高於 10%。' };
+  if (blocked >= 3 || blocked / openTasks >= 0.15) return { level: 'High Risk', reason: '受阻任務需要注意。' };
+  if (expected !== null && daysUntilDue !== null && daysUntilDue <= 7 && progress < expected - 20) return { level: 'High Risk', reason: '進度落後預期超過 20%。' };
+  if (overdue > 0 || blocked > 0) return { level: 'Attention', reason: '目前有逾期或受阻任務。' };
+  if (!project.nextAction) return { level: 'Attention', reason: '尚未設定下一步。' };
+  return { level: 'Healthy', reason: '進度、下一步與任務狀態目前正常。' };
 }
 
 export function getRisk(project, tasks) {
   const blocked = getBlockedTasks(tasks).length;
   const overdue = getOverdueTasks(tasks).length;
   const computed = blocked >= 2 || overdue >= 2 ? 'High' : blocked || overdue ? 'Medium' : 'Low';
-  const computedReason = blocked || overdue ? 'Computed from blocked and overdue tasks.' : 'No blocking risk detected.';
+  const computedReason = blocked || overdue ? '依受阻與逾期任務自動計算。' : '目前沒有偵測到阻塞風險。';
   return {
     manual: project.riskLevelManual,
     computed,
     display: project.riskLevelManual || computed,
-    reason: project.riskLevelManual ? 'Manual risk override is active.' : computedReason,
+    reason: project.riskLevelManual ? '目前使用手動風險設定。' : computedReason,
     computedReason
   };
 }

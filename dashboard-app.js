@@ -321,7 +321,7 @@ function bindTaskDeleteActions() {
     control.addEventListener('click', (event) => {
       const taskId = event.currentTarget.dataset.taskId;
       const teamId = event.currentTarget.dataset.teamId;
-      const confirmed = window.confirm('Delete this task? This only affects the in-memory prototype state.');
+      const confirmed = window.confirm('確定要刪除這個任務嗎？這只會影響本機原型資料。');
       if (!confirmed) return;
 
       const result = deleteTask(taskId);
