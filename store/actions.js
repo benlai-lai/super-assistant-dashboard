@@ -1,6 +1,6 @@
 import { dispatch, getState } from './store.js';
 import { isNullableDueDate, normalizeVisibility, TASK_STATUSES } from './state-utils.js';
-import { canCreateTask, canWriteTask } from './selectors.js';
+import { canCreateTask, canReadProject, canReadTask, canReadTeam, canWriteTask } from './selectors.js';
 
 export function switchCurrentUser(userId) {
   const state = getState();
@@ -85,6 +85,7 @@ export function selectProject(projectId) {
   const state = getState();
   const project = state.projects.find((item) => item.id === projectId);
   if (!project) return { ok: false, error: 'PROJECT_NOT_FOUND' };
+  if (!canReadProject(state, projectId)) return { ok: false, error: 'UNAUTHORIZED_SELECTION' };
   if (state.selectedProjectId === projectId && state.selectedWorkspaceId === project.workspaceId) {
     return { ok: true, unchanged: true };
   }
@@ -100,6 +101,7 @@ export function selectTeam(teamId) {
   const state = getState();
   const team = state.teams.find((item) => item.id === teamId);
   if (!team) return { ok: false, error: 'TEAM_NOT_FOUND' };
+  if (!canReadTeam(state, teamId)) return { ok: false, error: 'UNAUTHORIZED_SELECTION' };
   const project = state.projects.find((item) => item.id === team.projectId);
   if (state.selectedTeamId === teamId && state.selectedProjectId === team.projectId) {
     return { ok: true, unchanged: true };
@@ -117,6 +119,7 @@ export function selectTask(taskId) {
   const state = getState();
   const task = state.tasks.find((item) => item.id === taskId);
   if (!task) return { ok: false, error: 'TASK_NOT_FOUND' };
+  if (!canReadTask(state, taskId)) return { ok: false, error: 'UNAUTHORIZED_SELECTION' };
   const project = state.projects.find((item) => item.id === task.projectId);
   if (state.selectedTaskId === taskId && state.selectedTeamId === task.teamId) {
     return { ok: true, unchanged: true };

@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import {
   createTask,
   deleteTask,
+  selectProject,
+  selectTask,
+  selectTeam,
   switchCurrentUser,
   updateTaskAssignee,
   updateTaskDueDate,
@@ -10,6 +13,8 @@ import {
 } from '../store/actions.js';
 import { projectCard, teamCard } from '../components/cards.js';
 import {
+  canReadProject,
+  canReadTeam,
   canReadTask,
   canWriteTask,
   getDependencyTasks,
@@ -32,6 +37,9 @@ import {
 } from '../store/selectors.js';
 import { TASK_STATUSES, VISIBILITY_LEVELS } from '../store/state-utils.js';
 import { getState, subscribe } from '../store/store.js';
+import { renderProjectPage } from '../pages/project-page.js';
+import { renderTaskPage } from '../pages/task-page.js';
+import { renderTeamPage } from '../pages/team-page.js';
 
 const initial = getState();
 const targetTaskId = 'task-checkin-flow';
@@ -173,7 +181,11 @@ const privateTask = getTaskById(visibilityFixture, 'task-discussion-questions');
 assert.equal(canReadTask(visibilityFixture, privateTask, 'user-fiona'), false);
 assert.equal(canReadTask(visibilityFixture, { ...privateTask, visibility: 'invalid' }, 'user-fiona'), false);
 assert.equal(canReadTask(visibilityFixture, { ...privateTask, visibility: undefined }, 'user-fiona'), false);
+assert.equal(canReadTask(visibilityFixture, privateTask.id, 'user-fiona'), false);
 assert.equal(canReadTask(visibilityFixture, privateTask, 'user-chris'), true);
+assert.equal(canReadProject(visibilityFixture, 'project-summer-camp', 'missing-user'), false);
+assert.equal(canReadTeam(visibilityFixture, 'team-equipment', 'user-chris'), false);
+assert.equal(canReadTeam(visibilityFixture, 'team-teaching', 'user-chris'), true);
 assert.equal(canReadTask(visibilityFixture, getTaskById(visibilityFixture, 'task-handout-print'), 'user-dora'), true);
 assert.equal(canReadTask(visibilityFixture, getTaskById(visibilityFixture, 'task-day-one-handout'), 'user-chris'), true);
 assert.equal(canReadTask(visibilityFixture, getTaskById(visibilityFixture, 'task-attendee-list'), 'user-fiona'), true);
@@ -200,12 +212,20 @@ assert.deepEqual(updateTaskStatus('task-day-one-handout', 'done'), { ok: false, 
 assert.equal(updateTaskStatus('task-handout-print', 'in-progress').ok, true);
 
 assert.equal(switchCurrentUser('user-chris').ok, true);
+const beforeUnauthorizedTeamSelection = JSON.stringify(getState());
+assert.deepEqual(selectTeam('team-equipment'), { ok: false, error: 'UNAUTHORIZED_SELECTION' });
+assert.equal(JSON.stringify(getState()), beforeUnauthorizedTeamSelection);
+const beforeUnauthorizedTaskSelection = JSON.stringify(getState());
+assert.deepEqual(selectTask('task-sound-list'), { ok: false, error: 'UNAUTHORIZED_SELECTION' });
+assert.equal(JSON.stringify(getState()), beforeUnauthorizedTaskSelection);
 assert.equal(updateTaskStatus('task-day-one-handout', 'done').ok, true);
 assert.deepEqual(updateTaskStatus('task-sound-list', 'in-progress'), { ok: false, error: 'UNAUTHORIZED_WRITE' });
 
 assert.equal(switchCurrentUser('user-ben').ok, true);
 assert.equal(updateTaskStatus('task-sound-list', 'done').ok, true);
+assert.equal(selectProject('project-summer-camp').ok, true);
 assert.equal(switchCurrentUser('user-amy').ok, true);
+assert.deepEqual(updateTaskStatus('task-sound-list', 'archived'), { ok: false, error: 'INVALID_STATUS' });
 
 const cardProject = visibilityFixture.projects[0];
 const cardTasks = getVisibleProjectTasks(visibilityFixture, cardProject.id, 'user-amy');
@@ -238,5 +258,34 @@ assert.match(teamCardHtml, /未分組|Traffic Team/);
 assert.match(teamCardHtml, /<dd>—<\/dd>/);
 assert.doesNotMatch(projectCardHtml, /user-ben/);
 assert.doesNotMatch(teamCardHtml, /user-fiona/);
+
+const deniedTeamHtml = renderTeamPage({ ...visibilityFixture, currentUserId: 'user-chris' }, 'team-equipment');
+assert.match(deniedTeamHtml, /無法查看此內容/);
+assert.doesNotMatch(deniedTeamHtml, /Equipment Team/);
+assert.doesNotMatch(deniedTeamHtml, /Evan/);
+assert.doesNotMatch(deniedTeamHtml, /projector model/);
+
+const deniedTaskHtml = renderTaskPage({ ...visibilityFixture, currentUserId: 'user-dora' }, 'task-discussion-questions');
+assert.match(deniedTaskHtml, /無法查看此內容/);
+assert.doesNotMatch(deniedTaskHtml, /Prepare discussion questions/);
+assert.doesNotMatch(deniedTaskHtml, /Private speaker notes/);
+assert.doesNotMatch(deniedTaskHtml, /Design check-in flow/);
+
+const deniedProjectHtml = renderProjectPage({ ...visibilityFixture, currentUserId: 'missing-user' }, 'project-summer-camp');
+assert.match(deniedProjectHtml, /無法查看此內容/);
+assert.doesNotMatch(deniedProjectHtml, /2026 Summer Youth Camp/);
+assert.doesNotMatch(deniedProjectHtml, /Ben Lin/);
+assert.doesNotMatch(deniedProjectHtml, /Milestones/);
+assert.doesNotMatch(deniedProjectHtml, /Project Health/);
+assert.doesNotMatch(deniedProjectHtml, /Risk/);
+
+const unknownProjectHtml = renderProjectPage({ ...visibilityFixture, currentUserId: 'missing-user' }, 'missing-project');
+assert.equal(unknownProjectHtml, deniedProjectHtml);
+
+assert.match(renderProjectPage({ ...visibilityFixture, currentUserId: 'user-grace' }, 'project-summer-camp'), /2026 Summer Youth Camp/);
+assert.match(renderProjectPage({ ...visibilityFixture, currentUserId: 'user-ben' }, 'project-summer-camp'), /2026 Summer Youth Camp/);
+assert.match(renderTeamPage({ ...visibilityFixture, currentUserId: 'user-chris' }, 'team-teaching'), /Teaching Team/);
+assert.match(renderTaskPage({ ...visibilityFixture, currentUserId: 'user-dora' }, 'task-handout-print'), /Print participant handbooks/);
+assert.match(renderTaskPage({ ...visibilityFixture, currentUserId: 'user-fiona' }, 'task-projector'), /Borrow projector/);
 
 console.log('state-foundation tests passed');

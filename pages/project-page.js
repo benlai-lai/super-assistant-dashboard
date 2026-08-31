@@ -1,6 +1,7 @@
 import { taskRow, teamCard } from '../components/cards.js';
 import { badge, emptyState, escapeHtml, layout, progressBar } from '../components/ui.js';
 import {
+  canReadProject,
   getBlockedTasks,
   getDueSoonTasks,
   getHealth,
@@ -19,7 +20,9 @@ import {
 } from '../store/selectors.js';
 
 export function renderProjectPage(state, projectId) {
-  const project = getProjectById(state, projectId) || state.projects[0];
+  if (!canReadProject(state, projectId)) return renderDeniedPage(state);
+
+  const project = getProjectById(state, projectId);
   const workspace = getWorkspaceById(state, project.workspaceId) || state.workspaces[0];
   const teams = getVisibleTeamsByProjectId(state, project.id);
   const tasks = getVisibleProjectTasks(state, project.id);
@@ -105,6 +108,30 @@ function toTeamCard(state, team) {
     riskStatus: risk.display,
     blockedCount: getBlockedTasks(tasks).length
   };
+}
+
+function renderDeniedPage() {
+  return `
+    <aside class="v2-sidebar">
+      <div class="v2-brand">Dashboard V2<span>Prototype</span></div>
+      <nav class="v2-nav" aria-label="Prototype navigation">
+        <a href="#/workspace/workspace-camp">Workspace</a>
+        <a href="#/my-tasks">My Tasks</a>
+      </nav>
+      <p class="v2-sidebar-note">Static Vanilla JS prototype with local browser persistence.</p>
+    </aside>
+    <main class="v2-main">
+      <header class="v2-topbar">
+        <div>
+          <div class="v2-crumbs"><a href="#/workspace/workspace-camp">Workspace</a></div>
+          <h1>無法查看此內容</h1>
+          <p>目前選取的 mock user 沒有權限查看此內容，或此內容不存在。</p>
+        </div>
+        <div class="v2-actions"><a class="v2-btn" href="#/workspace/workspace-camp">Back to Workspace</a></div>
+      </header>
+      <section class="v2-card"><h2>無法查看此內容</h2><p>請返回 Workspace，或在可查看頁面切換具備授權的 mock user。</p></section>
+    </main>
+  `;
 }
 
 function toTaskRow(state, task) {
