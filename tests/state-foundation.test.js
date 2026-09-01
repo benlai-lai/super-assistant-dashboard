@@ -1,15 +1,25 @@
 import assert from 'node:assert/strict';
 
 import {
+  addExternalLink,
+  addTaskDependency,
+  createProject,
   createTask,
+  createTeam,
   deleteTask,
+  removeExternalLink,
+  removeTaskDependency,
   selectProject,
   selectTask,
   selectTeam,
   switchCurrentUser,
+  updateExternalLink,
+  updateProject,
+  updateTask,
   updateTaskAssignee,
   updateTaskDueDate,
-  updateTaskStatus
+  updateTaskStatus,
+  updateTeam
 } from '../store/actions.js';
 import { projectCard, teamCard } from '../components/cards.js';
 import {
@@ -17,6 +27,12 @@ import {
   canReadTeam,
   canReadTask,
   canWriteTask,
+  canCreateProject,
+  canCreateTeam,
+  canManageProject,
+  canManageTeam,
+  canWriteAttachment,
+  getAvailableDependencyTasks,
   getDependencyTasks,
   getActivitiesByTaskId,
   getAttachmentsByTaskId,
@@ -249,12 +265,12 @@ const teamCardHtml = teamCard({
   ownerName: 'Fiona Tsai',
   dueDate: null
 });
-for (const required of ['Project name', 'Team name', 'Progress percentage', 'Completed / total tasks', 'Next action', 'Risk status', 'Owner', 'Due date']) {
+for (const required of ['專案名稱', '團隊名稱', '進度百分比', '已完成／總任務數', '下一步', '風險狀態', '負責人', '截止日期']) {
   assert.match(projectCardHtml, new RegExp(required));
   assert.match(teamCardHtml, new RegExp(required));
 }
 assert.match(projectCardHtml, /data-card-fields="project-name,team-name,progress-percentage,task-count,next-action,risk-status,owner,due-date"/);
-assert.match(teamCardHtml, /未分組|Traffic Team/);
+assert.match(teamCardHtml, /未分組|交通團隊/);
 assert.match(teamCardHtml, /<dd>—<\/dd>/);
 assert.doesNotMatch(projectCardHtml, /user-ben/);
 assert.doesNotMatch(teamCardHtml, /user-fiona/);
@@ -262,30 +278,163 @@ assert.doesNotMatch(teamCardHtml, /user-fiona/);
 const deniedTeamHtml = renderTeamPage({ ...visibilityFixture, currentUserId: 'user-chris' }, 'team-equipment');
 assert.match(deniedTeamHtml, /無法查看此內容/);
 assert.doesNotMatch(deniedTeamHtml, /Equipment Team/);
+assert.doesNotMatch(deniedTeamHtml, /器材團隊/);
 assert.doesNotMatch(deniedTeamHtml, /Evan/);
 assert.doesNotMatch(deniedTeamHtml, /projector model/);
+assert.doesNotMatch(deniedTeamHtml, /投影機型號/);
 
 const deniedTaskHtml = renderTaskPage({ ...visibilityFixture, currentUserId: 'user-dora' }, 'task-discussion-questions');
 assert.match(deniedTaskHtml, /無法查看此內容/);
 assert.doesNotMatch(deniedTaskHtml, /Prepare discussion questions/);
+assert.doesNotMatch(deniedTaskHtml, /準備討論題目/);
 assert.doesNotMatch(deniedTaskHtml, /Private speaker notes/);
+assert.doesNotMatch(deniedTaskHtml, /講員私人筆記/);
 assert.doesNotMatch(deniedTaskHtml, /Design check-in flow/);
+assert.doesNotMatch(deniedTaskHtml, /設計報到流程/);
 
 const deniedProjectHtml = renderProjectPage({ ...visibilityFixture, currentUserId: 'missing-user' }, 'project-summer-camp');
 assert.match(deniedProjectHtml, /無法查看此內容/);
 assert.doesNotMatch(deniedProjectHtml, /2026 Summer Youth Camp/);
+assert.doesNotMatch(deniedProjectHtml, /2026 暑期青年營/);
 assert.doesNotMatch(deniedProjectHtml, /Ben Lin/);
-assert.doesNotMatch(deniedProjectHtml, /Milestones/);
-assert.doesNotMatch(deniedProjectHtml, /Project Health/);
-assert.doesNotMatch(deniedProjectHtml, /Risk/);
+assert.doesNotMatch(deniedProjectHtml, /里程碑/);
+assert.doesNotMatch(deniedProjectHtml, /專案健康度/);
+assert.doesNotMatch(deniedProjectHtml, /風險/);
 
 const unknownProjectHtml = renderProjectPage({ ...visibilityFixture, currentUserId: 'missing-user' }, 'missing-project');
 assert.equal(unknownProjectHtml, deniedProjectHtml);
 
-assert.match(renderProjectPage({ ...visibilityFixture, currentUserId: 'user-grace' }, 'project-summer-camp'), /2026 Summer Youth Camp/);
-assert.match(renderProjectPage({ ...visibilityFixture, currentUserId: 'user-ben' }, 'project-summer-camp'), /2026 Summer Youth Camp/);
-assert.match(renderTeamPage({ ...visibilityFixture, currentUserId: 'user-chris' }, 'team-teaching'), /Teaching Team/);
-assert.match(renderTaskPage({ ...visibilityFixture, currentUserId: 'user-dora' }, 'task-handout-print'), /Print participant handbooks/);
-assert.match(renderTaskPage({ ...visibilityFixture, currentUserId: 'user-fiona' }, 'task-projector'), /Borrow projector/);
+assert.match(renderProjectPage({ ...visibilityFixture, currentUserId: 'user-grace' }, 'project-summer-camp'), /2026 暑期青年營/);
+assert.match(renderProjectPage({ ...visibilityFixture, currentUserId: 'user-ben' }, 'project-summer-camp'), /2026 暑期青年營/);
+assert.match(renderTeamPage({ ...visibilityFixture, currentUserId: 'user-chris' }, 'team-teaching'), /教材團隊/);
+assert.match(renderTaskPage({ ...visibilityFixture, currentUserId: 'user-dora' }, 'task-handout-print'), /印製學員手冊/);
+assert.match(renderTaskPage({ ...visibilityFixture, currentUserId: 'user-fiona' }, 'task-projector'), /借用投影機/);
+
+const unchangedAfterRejected = (operation) => {
+  const before = JSON.stringify(getState());
+  const result = operation();
+  assert.equal(JSON.stringify(getState()), before);
+  return result;
+};
+
+assert.equal(switchCurrentUser('user-amy').ok, true);
+assert.equal(canCreateProject(getState(), 'workspace-camp'), true);
+const projectResult = createProject({
+  workspaceId: 'workspace-camp',
+  name: 'Local Retreat Project',
+  description: 'Local-only Phase 2A project',
+  ownerId: 'user-amy',
+  startDate: '2026-08-10',
+  dueDate: '2026-08-20',
+  nextAction: 'Create working teams',
+  riskLevelManual: 'Low',
+  visibility: 'workspace'
+});
+assert.equal(projectResult.ok, true);
+assert.equal(getTaskById(getState(), targetTaskId), null);
+assert.equal(updateProject(projectResult.projectId, { name: 'Local Retreat Project Updated', riskLevelManual: 'Medium' }).ok, true);
+assert.equal(getState().projects.find((project) => project.id === projectResult.projectId).name, 'Local Retreat Project Updated');
+assert.deepEqual(updateProject(projectResult.projectId, { visibility: 'unknown' }), { ok: false, error: 'INVALID_VISIBILITY' });
+
+assert.equal(canCreateTeam(getState(), { projectId: projectResult.projectId }), true);
+const teamResult = createTeam({
+  projectId: projectResult.projectId,
+  name: 'Hospitality Team',
+  leadId: 'user-chris',
+  memberIds: ['user-dora'],
+  nextAction: 'Assign welcome tasks',
+  visibility: 'project'
+});
+assert.equal(teamResult.ok, true);
+assert.equal(canManageTeam(getState(), getState().teams.find((team) => team.id === teamResult.teamId)), true);
+assert.equal(updateTeam(teamResult.teamId, { name: 'Hospitality Team Updated', memberIds: ['user-chris', 'user-dora'], visibility: 'team' }).ok, true);
+
+const managedTask = createTask({
+  title: 'Prepare welcome table',
+  teamId: teamResult.teamId,
+  projectId: projectResult.projectId,
+  assigneeId: 'user-dora',
+  dueDate: '2026-08-18',
+  visibility: 'team',
+  nextAction: 'Confirm table count',
+  riskStatus: 'Low',
+  description: 'Local edit coverage task'
+});
+assert.equal(managedTask.ok, true);
+assert.equal(updateTask(managedTask.taskId, {
+  title: 'Prepare updated welcome table',
+  status: 'blocked',
+  assigneeId: 'user-dora',
+  dueDate: '2026-08-19',
+  visibility: 'project',
+  nextAction: 'Call venue',
+  riskStatus: 'High',
+  description: 'Updated description'
+}).ok, true);
+const editedTask = getTaskById(getState(), managedTask.taskId);
+assert.equal(editedTask.title, 'Prepare updated welcome table');
+assert.equal(editedTask.status, 'blocked');
+assert.equal(editedTask.blocked, true);
+assert.equal(editedTask.visibility, 'project');
+assert.equal(editedTask.riskStatus, 'High');
+assert.equal(editedTask.description, 'Updated description');
+assert.deepEqual(updateTask(managedTask.taskId, { status: 'archived' }), { ok: false, error: 'INVALID_STATUS' });
+assert.deepEqual(updateTask(managedTask.taskId, { visibility: 'invalid' }), { ok: false, error: 'INVALID_VISIBILITY' });
+
+const linkResult = addExternalLink({
+  taskId: managedTask.taskId,
+  title: 'Venue page',
+  type: 'Web',
+  url: 'https://example.com/venue',
+  note: 'External metadata only',
+  visibility: 'project'
+});
+assert.equal(linkResult.ok, true);
+const link = getState().attachments.find((attachment) => attachment.id === linkResult.attachmentId);
+assert.equal(canWriteAttachment(getState(), link), true);
+assert.equal(updateExternalLink(linkResult.attachmentId, { title: 'Venue page updated', url: 'https://example.com/venue-updated', visibility: 'team' }).ok, true);
+assert.deepEqual(addExternalLink({ taskId: managedTask.taskId, title: 'Local file', url: 'file:///C:/secret.txt', visibility: 'team' }), { ok: false, error: 'INVALID_URL' });
+
+const dependencyTask = createTask({
+  title: 'Confirm table count',
+  teamId: teamResult.teamId,
+  projectId: projectResult.projectId,
+  assigneeId: 'user-chris',
+  dueDate: null,
+  visibility: 'project'
+});
+assert.equal(dependencyTask.ok, true);
+assert.equal(getAvailableDependencyTasks(getState(), managedTask.taskId).some((task) => task.id === dependencyTask.taskId), true);
+assert.equal(addTaskDependency(managedTask.taskId, dependencyTask.taskId).ok, true);
+assert.deepEqual(addTaskDependency(managedTask.taskId, managedTask.taskId), { ok: false, error: 'INVALID_DEPENDENCY' });
+assert.deepEqual(addTaskDependency(managedTask.taskId, dependencyTask.taskId), { ok: false, error: 'DUPLICATE_DEPENDENCY' });
+assert.deepEqual(addTaskDependency(managedTask.taskId, 'missing-task'), { ok: false, error: 'TASK_NOT_FOUND' });
+assert.equal(removeTaskDependency(managedTask.taskId, dependencyTask.taskId).ok, true);
+assert.deepEqual(removeTaskDependency(managedTask.taskId, dependencyTask.taskId), { ok: false, error: 'DEPENDENCY_NOT_FOUND' });
+
+assert.equal(switchCurrentUser('user-fiona').ok, true);
+assert.equal(canCreateProject(getState(), 'workspace-camp'), false);
+assert.deepEqual(unchangedAfterRejected(() => createProject({ workspaceId: 'workspace-camp', name: 'Viewer Project', ownerId: 'user-fiona' })), { ok: false, error: 'UNAUTHORIZED_WRITE' });
+assert.deepEqual(unchangedAfterRejected(() => updateProject(projectResult.projectId, { name: 'Viewer edit' })), { ok: false, error: 'UNAUTHORIZED_WRITE' });
+assert.deepEqual(unchangedAfterRejected(() => createTeam({ projectId: projectResult.projectId, name: 'Viewer Team', leadId: 'user-fiona' })), { ok: false, error: 'UNAUTHORIZED_WRITE' });
+assert.deepEqual(unchangedAfterRejected(() => updateTask(managedTask.taskId, { title: 'Viewer edit' })), { ok: false, error: 'UNAUTHORIZED_WRITE' });
+assert.deepEqual(unchangedAfterRejected(() => updateExternalLink(linkResult.attachmentId, { title: 'Viewer link edit' })), { ok: false, error: 'UNAUTHORIZED_WRITE' });
+
+assert.equal(switchCurrentUser('user-dora').ok, true);
+assert.deepEqual(unchangedAfterRejected(() => updateTask('task-discussion-questions', { title: 'Member leak' })), { ok: false, error: 'UNAUTHORIZED_WRITE' });
+assert.deepEqual(unchangedAfterRejected(() => addTaskDependency(managedTask.taskId, 'task-discussion-questions')), { ok: false, error: 'UNAUTHORIZED_DEPENDENCY' });
+assert.equal(getAvailableDependencyTasks(getState(), managedTask.taskId).some((task) => task.id === 'task-discussion-questions'), false);
+
+assert.equal(switchCurrentUser('user-chris').ok, true);
+assert.deepEqual(unchangedAfterRejected(() => updateTeam('team-equipment', { name: 'Wrong team' })), { ok: false, error: 'UNAUTHORIZED_WRITE' });
+assert.deepEqual(unchangedAfterRejected(() => updateTask('task-sound-list', { title: 'Wrong team task' })), { ok: false, error: 'UNAUTHORIZED_WRITE' });
+
+assert.equal(switchCurrentUser('user-ben').ok, true);
+assert.equal(canManageProject(getState(), getState().projects.find((project) => project.id === 'project-summer-camp')), true);
+assert.deepEqual(unchangedAfterRejected(() => updateProject(projectResult.projectId, { name: 'Wrong project' })), { ok: false, error: 'UNAUTHORIZED_WRITE' });
+
+assert.equal(switchCurrentUser('user-amy').ok, true);
+assert.equal(removeExternalLink(linkResult.attachmentId).ok, true);
+assert.equal(getState().attachments.some((attachment) => attachment.id === linkResult.attachmentId), false);
 
 console.log('state-foundation tests passed');

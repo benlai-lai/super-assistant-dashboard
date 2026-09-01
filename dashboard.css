@@ -25,7 +25,9 @@ body {
 a { color: inherit; }
 button { font: inherit; }
 
-select { font: inherit; }
+select,
+textarea,
+input { font: inherit; }
 
 .sr-only {
   height: 1px;
@@ -185,6 +187,11 @@ select { font: inherit; }
 .v2-btn.danger {
   border-color: #ffd2d7;
   color: var(--v2-red);
+}
+
+.v2-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .v2-kpis {
@@ -389,8 +396,11 @@ select { font: inherit; }
 
 .v2-status-control select,
 .v2-status-control input,
+.v2-status-control textarea,
 .v2-form input,
 .v2-form select,
+.v2-form textarea,
+.v2-inline-input,
 select.v2-status-control,
 input.v2-status-control {
   background: var(--v2-panel-soft);
@@ -399,12 +409,25 @@ input.v2-status-control {
   color: var(--v2-text);
   min-width: 180px;
   padding: 8px 10px;
+  width: 100%;
 }
 
 .v2-form {
   display: grid;
   gap: 12px;
   margin-top: 12px;
+}
+
+.v2-form.compact {
+  border-top: 1px solid var(--v2-line);
+  margin: 12px 0;
+  padding-top: 12px;
+}
+
+.v2-form-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .v2-form label {
@@ -421,6 +444,20 @@ input.v2-status-control {
 
 .v2-create-task-panel[hidden] {
   display: none;
+}
+
+.v2-collapsible-panel[hidden] {
+  display: none;
+}
+
+.v2-inline-danger {
+  background: transparent;
+  border: 0;
+  color: var(--v2-red);
+  cursor: pointer;
+  font-weight: 800;
+  padding: 0;
+  text-align: left;
 }
 
 .v2-empty {
