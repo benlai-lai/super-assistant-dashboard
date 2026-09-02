@@ -27,6 +27,20 @@ async function setupTestServer(credentials, port = 0) {
   return server;
 }
 
+async function getFailedLoginResponse(server, username, password, headers = {}) {
+  const { port } = server.server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/session`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify({ username, password }),
+  });
+  return {
+    status: response.status,
+    body: await response.text(),
+    headers: [...response.headers.entries()].sort(),
+  };
+}
+
 async function makeRequest(url, method = 'GET', body = null, cookies = '') {
   const baseUrl = new URL(url);
   const options = {
@@ -183,6 +197,87 @@ test('HTTP Server - POST /api/session with invalid password', async () => {
 });
 
 test('HTTP Server - POST /api/session with unknown username', async () => {
+
+  test('HTTP Server - unknown username and wrong password have equivalent public responses', async () => {
+    const salt = randomBytes(16);
+    const hash = (await scryptAsync('correct-password', salt, 32)).toString('hex');
+    const credentials = {
+      'editor-1': {
+        username: 'known@example.com',
+        passwordHash: hash,
+        salt: salt.toString('hex'),
+        role: 'editor',
+      },
+    };
+    const server = await setupTestServer(credentials, 8090);
+    try {
+      const unknown = await getFailedLoginResponse(server, 'unknown@example.com', 'wrong-password');
+      const wrongPassword = await getFailedLoginResponse(server, 'known@example.com', 'wrong-password');
+      assert.deepEqual(unknown, wrongPassword);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('HTTP Server - forged X-Forwarded-For cannot bypass the same remote IP limit', async () => {
+    const server = await setupTestServer({}, 8091);
+    try {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const response = await getFailedLoginResponse(server, 'unknown@example.com', 'wrong-password', {
+          'X-Forwarded-For': `203.0.113.${attempt + 1}`,
+        });
+        assert.equal(response.status, 401);
+      }
+      const limited = await getFailedLoginResponse(server, 'unknown@example.com', 'wrong-password', {
+        'X-Forwarded-For': '203.0.113.99',
+      });
+      assert.equal(limited.status, 429);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('HTTP Server - caller-controlled headers do not create unbounded rate-limit buckets', async () => {
+    const server = createHttpServer({ maxRateLimitEntries: 32 });
+    try {
+      for (let index = 0; index < 10000; index++) {
+        server.getClientIp({
+          headers: { 'x-forwarded-for': `203.0.113.${index}` },
+          socket: { remoteAddress: '127.0.0.1' },
+        });
+        server.rateLimiter.isLimited('127.0.0.1');
+      }
+      assert.equal(server.rateLimiter.attempts.size, 1);
+      assert(server.rateLimiter.attempts.size <= server.rateLimiter.maxEntries);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('HTTP Server - rate-limit entries expire and are cleaned during normal operations', async () => {
+    const server = createHttpServer({ rateLimitWindowMs: 1, maxRateLimitEntries: 2 });
+    try {
+      server.rateLimiter.isLimited('expired-ip');
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      server.rateLimiter.isLimited('new-ip');
+      assert.equal(server.rateLimiter.attempts.has('expired-ip'), false);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('HTTP Server - full rate-limit capacity fails closed without evicting valid entries', async () => {
+    const server = createHttpServer({ maxRateLimitEntries: 1 });
+    try {
+      server.rateLimiter.isLimited('valid-ip');
+      assert.equal(server.rateLimiter.isLimited('new-ip'), true);
+      assert.equal(server.rateLimiter.attempts.has('valid-ip'), true);
+      assert.equal(server.rateLimiter.attempts.has('new-ip'), false);
+      assert.equal(server.rateLimiter.attempts.size, 1);
+    } finally {
+      await server.close();
+    }
+  });
   const editorPassword = 'editor-secure-password-123';
   const editorSalt = randomBytes(16);
   const editorHash = (await scryptAsync(editorPassword, editorSalt, 32)).toString('hex');
@@ -207,6 +302,37 @@ test('HTTP Server - POST /api/session with unknown username', async () => {
     assert.equal(response.status, 401);
     // Generic error message, same as wrong password
     assert.equal(response.body.error, 'Invalid credentials');
+  } finally {
+    await server.close();
+  }
+});
+
+test('HTTP Server - known and unknown usernames each perform one equivalent password verification', async () => {
+  const salt = randomBytes(16);
+  const hash = (await scryptAsync('correct-password', salt, 32)).toString('hex');
+  const credentials = {
+    'editor-1': {
+      username: 'known@example.com',
+      passwordHash: hash,
+      salt: salt.toString('hex'),
+      role: 'editor',
+    },
+  };
+  const server = createHttpServer({ credentials });
+  const originalVerifyPassword = server.credentialManager.verifyPassword.bind(server.credentialManager);
+  const verificationCalls = [];
+  server.credentialManager.verifyPassword = async (...args) => {
+    verificationCalls.push(args);
+    return originalVerifyPassword(...args);
+  };
+  try {
+    assert.equal(await server.credentialManager.authenticate('known@example.com', 'wrong-password'), null);
+    assert.equal(await server.credentialManager.authenticate('unknown@example.com', 'wrong-password'), null);
+    assert.equal(verificationCalls.length, 2);
+    assert.equal(verificationCalls[0][1].length, hash.length);
+    assert.equal(verificationCalls[1][1].length, hash.length);
+    assert.equal(verificationCalls[0][2].length, salt.toString('hex').length);
+    assert.equal(verificationCalls[1][2].length, salt.toString('hex').length);
   } finally {
     await server.close();
   }

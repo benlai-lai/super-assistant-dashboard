@@ -5,6 +5,10 @@ import { checkPermission, validateRoleFromSession } from './access-policy.mjs';
 import { createSessionStore } from './session-store.mjs';
 
 const scryptAsync = promisify(scrypt);
+const DUMMY_CREDENTIAL = {
+  salt: '00000000000000000000000000000000',
+  passwordHash: '0000000000000000000000000000000000000000000000000000000000000000',
+};
 
 /**
  * Configuration and credential mapping
@@ -41,14 +45,23 @@ class CredentialManager {
    * @returns {{ actorId, role } | null}
    */
   async authenticate(username, password) {
+    let matchedActor = null;
+    let matchedCredential = null;
+
     for (const [actorId, cred] of Object.entries(this.credentials)) {
       if (cred.username === username) {
-        const isValid = await this.verifyPassword(password, cred.passwordHash, cred.salt);
-        if (isValid) {
-          return { actorId, role: cred.role };
-        }
+        matchedActor = { actorId, role: cred.role };
+        matchedCredential = cred;
+        break;
       }
     }
+
+    const credential = matchedCredential || DUMMY_CREDENTIAL;
+    const isValid = await this.verifyPassword(password, credential.passwordHash, credential.salt);
+    if (matchedActor && isValid) {
+      return matchedActor;
+    }
+
     return null;
   }
 }
@@ -58,29 +71,37 @@ class CredentialManager {
  * Simple in-memory implementation
  */
 class RateLimiter {
-  constructor(maxAttempts = 5, windowMs = 15 * 60 * 1000) {
+  constructor(maxAttempts = 5, windowMs = 15 * 60 * 1000, maxEntries = 1000) {
     this.maxAttempts = maxAttempts;
     this.windowMs = windowMs;
+    this.maxEntries = maxEntries;
     // Map<ip, { attempts, resetTime }>
     this.attempts = new Map();
   }
 
   isLimited(ip) {
     const now = Date.now();
+    this.cleanupExpired(now);
     const record = this.attempts.get(ip);
 
     if (!record) {
-      this.attempts.set(ip, { attempts: 1, resetTime: now + this.windowMs });
-      return false;
-    }
-
-    if (now >= record.resetTime) {
+      if (this.attempts.size >= this.maxEntries) {
+        return true;
+      }
       this.attempts.set(ip, { attempts: 1, resetTime: now + this.windowMs });
       return false;
     }
 
     record.attempts++;
     return record.attempts > this.maxAttempts;
+  }
+
+  cleanupExpired(now = Date.now()) {
+    for (const [ip, record] of this.attempts) {
+      if (now >= record.resetTime) {
+        this.attempts.delete(ip);
+      }
+    }
   }
 
   reset(ip) {
@@ -95,7 +116,11 @@ export class HttpServer {
   constructor(options = {}) {
     this.sessionStore = createSessionStore();
     this.credentialManager = new CredentialManager(options.credentials || {});
-    this.rateLimiter = new RateLimiter(options.maxLoginAttempts || 5);
+    this.rateLimiter = new RateLimiter(
+      options.maxLoginAttempts || 5,
+      options.rateLimitWindowMs || 15 * 60 * 1000,
+      options.maxRateLimitEntries || 1000,
+    );
     this.server = null;
     this.port = options.port || 8080;
     this.host = options.host || '127.0.0.1';
@@ -145,7 +170,7 @@ export class HttpServer {
    * Get client IP
    */
   getClientIp(req) {
-    return req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress;
+    return req.socket.remoteAddress;
   }
 
   /**
