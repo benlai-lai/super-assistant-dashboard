@@ -1,6 +1,16 @@
 import { assertId, assertIsoDateTime, ensureFound, runInTransaction } from './database.mjs';
 
 export function createInquiryRepository(db) {
+  const inquiryUpdateColumns = {
+    title: 'title',
+    status: 'status',
+  };
+  const itemUpdateColumns = {
+    description: 'description',
+    quantity: 'quantity',
+    notes: 'notes',
+  };
+
   function get(id) {
     assertId(id, 'inquiry id');
     return db.prepare('SELECT * FROM inquiries WHERE id = ?').get(id) ?? null;
@@ -33,6 +43,26 @@ export function createInquiryRepository(db) {
           inquiry.updatedAt,
         );
         return requireInquiry(inquiry.id);
+      });
+    },
+    list({ limit = 50 } = {}) {
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid inquiry limit');
+      return db.prepare('SELECT * FROM inquiries ORDER BY created_at, id LIMIT ?').all(limit);
+    },
+    update(id, patch) {
+      assertId(id, 'inquiry id');
+      if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('Invalid inquiry patch');
+      const entries = Object.entries(patch);
+      if (entries.length === 0 || entries.some(([key]) => !inquiryUpdateColumns[key])) throw new Error('Invalid inquiry patch');
+      requireInquiry(id);
+      const assignments = entries.map(([key]) => `${inquiryUpdateColumns[key]} = ?`).join(', ');
+      return runInTransaction(db, () => {
+        db.prepare(`UPDATE inquiries SET ${assignments}, updated_at = ? WHERE id = ?`).run(
+          ...entries.map(([, value]) => value),
+          new Date().toISOString(),
+          id,
+        );
+        return requireInquiry(id);
       });
     },
     addItem(item) {
@@ -72,6 +102,23 @@ export function createInquiryRepository(db) {
     listItems(inquiryId) {
       requireInquiry(inquiryId);
       return db.prepare('SELECT * FROM inquiry_items WHERE inquiry_id = ? ORDER BY created_at, id').all(inquiryId);
+    },
+    updateItem(inquiryId, itemId, patch) {
+      assertId(inquiryId, 'inquiry id');
+      assertId(itemId, 'inquiry item id');
+      if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('Invalid inquiry item patch');
+      const entries = Object.entries(patch);
+      if (entries.length === 0 || entries.some(([key]) => !itemUpdateColumns[key])) throw new Error('Invalid inquiry item patch');
+      return runInTransaction(db, () => {
+        this.requireItemInInquiry(itemId, inquiryId);
+        const assignments = entries.map(([key]) => `${itemUpdateColumns[key]} = ?`).join(', ');
+        db.prepare(`UPDATE inquiry_items SET ${assignments} WHERE id = ? AND inquiry_id = ?`).run(
+          ...entries.map(([, value]) => value),
+          itemId,
+          inquiryId,
+        );
+        return this.getItem(itemId);
+      });
     },
   };
 }
