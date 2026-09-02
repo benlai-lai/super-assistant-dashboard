@@ -43,10 +43,8 @@ export function createExportService(db, { accessPolicy } = {}) {
         denyExport();
       }
 
-      const inquiry = ensureFound(
-        db.prepare('SELECT * FROM inquiries WHERE id = ?').get(inquiryId),
-        GENERIC_EXPORT_DENIED_MESSAGE,
-      );
+      const inquiry = db.prepare('SELECT * FROM inquiries WHERE id = ?').get(inquiryId);
+      if (!inquiry) denyExport();
       const customer = ensureFound(db.prepare('SELECT * FROM customers WHERE id = ?').get(inquiry.customer_id), 'Unknown customer');
       const items = db.prepare('SELECT * FROM inquiry_items WHERE inquiry_id = ? ORDER BY created_at, id').all(inquiryId);
       const versions = db.prepare('SELECT * FROM quotation_versions WHERE inquiry_id = ? ORDER BY version_number').all(inquiryId);

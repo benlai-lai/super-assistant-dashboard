@@ -72,18 +72,41 @@ function getThrown(callback) {
 
 function captureDenied(error) {
   assert.match(error.message, DENIED_PATTERN);
-  assert.equal('inquiry' in error, false);
-  assert.equal('customer' in error, false);
-  assert.equal('items' in error, false);
-  assert.equal('quotationVersions' in error, false);
-  assert.equal('attachments' in error, false);
-  assert.equal('costSummary' in error, false);
+  for (const key of [
+    'cause',
+    'inquiry',
+    'inquiryId',
+    'exists',
+    'customer',
+    'items',
+    'quotationVersions',
+    'attachments',
+    'costSummary',
+    'metadata',
+  ]) {
+    assert.equal(key in error, false, `denial must not expose ${key}`);
+  }
 }
 
-function assertDeniedReadOnly(db, callback) {
+function assertSamePublicDenial(actual, expected) {
+  assert.equal(actual.constructor, expected.constructor);
+  assert.equal(actual.name, expected.name);
+  assert.equal(actual.message, expected.message);
+  assert.equal(Object.hasOwn(actual, 'code'), Object.hasOwn(expected, 'code'));
+  if (Object.hasOwn(actual, 'code')) assert.equal(actual.code, expected.code);
+  assert.deepEqual(
+    Object.fromEntries(Object.keys(actual).sort().map((key) => [key, actual[key]])),
+    Object.fromEntries(Object.keys(expected).sort().map((key) => [key, expected[key]])),
+  );
+}
+
+function assertDeniedReadOnly(db, callback, expectedError = null) {
   const before = countRows(db);
-  captureDenied(getThrown(callback));
+  const error = getThrown(callback);
+  captureDenied(error);
+  if (expectedError) assertSamePublicDenial(error, expectedError);
   assert.deepEqual(countRows(db), before);
+  return error;
 }
 
 test('authorized actor can export existing inquiry with schemaVersion', () => {
@@ -115,10 +138,15 @@ test('unauthorized actor cannot export existing inquiry and receives no metadata
 test('unknown inquiry uses the same generic denial as unauthorized inquiry', () => {
   const db = seedExportDatabase();
   try {
-    const unauthorizedError = getThrown(() => createAuthorizedExportService(db).exportInquiry('inquiry-two', ACTOR));
-    const unknownError = getThrown(() => createAuthorizedExportService(db, ['missing-inquiry']).exportInquiry('missing-inquiry', ACTOR));
-    assert.equal(unknownError.message, unauthorizedError.message);
-    captureDenied(unknownError);
+    const unauthorizedError = assertDeniedReadOnly(
+      db,
+      () => createAuthorizedExportService(db).exportInquiry('inquiry-two', ACTOR),
+    );
+    assertDeniedReadOnly(
+      db,
+      () => createAuthorizedExportService(db, ['missing-inquiry']).exportInquiry('missing-inquiry', ACTOR),
+      unauthorizedError,
+    );
   } finally {
     db.close();
   }
@@ -127,7 +155,15 @@ test('unknown inquiry uses the same generic denial as unauthorized inquiry', () 
 test('missing actor context is rejected before export reads metadata', () => {
   const db = seedExportDatabase();
   try {
-    assertDeniedReadOnly(db, () => createAuthorizedExportService(db).exportInquiry('inquiry-one'));
+    const unauthorizedError = assertDeniedReadOnly(
+      db,
+      () => createAuthorizedExportService(db).exportInquiry('inquiry-two', ACTOR),
+    );
+    assertDeniedReadOnly(
+      db,
+      () => createAuthorizedExportService(db).exportInquiry('inquiry-one'),
+      unauthorizedError,
+    );
   } finally {
     db.close();
   }
@@ -136,9 +172,13 @@ test('missing actor context is rejected before export reads metadata', () => {
 test('invalid actor context and forged boolean authorization are rejected', () => {
   const db = seedExportDatabase();
   try {
-    assertDeniedReadOnly(db, () => createAuthorizedExportService(db).exportInquiry('inquiry-one', { actorId: '', role: 'export-operator' }));
-    assertDeniedReadOnly(db, () => createAuthorizedExportService(db).exportInquiry('inquiry-one', { actorId: 'actor-one', authorized: true }));
-    assertDeniedReadOnly(db, () => createAuthorizedExportService(db).exportInquiry('inquiry-one', { actorId: 'actor-one', isAdmin: true }));
+    const unauthorizedError = assertDeniedReadOnly(
+      db,
+      () => createAuthorizedExportService(db).exportInquiry('inquiry-two', ACTOR),
+    );
+    assertDeniedReadOnly(db, () => createAuthorizedExportService(db).exportInquiry('inquiry-one', { actorId: '', role: 'export-operator' }), unauthorizedError);
+    assertDeniedReadOnly(db, () => createAuthorizedExportService(db).exportInquiry('inquiry-one', { actorId: 'actor-one', authorized: true }), unauthorizedError);
+    assertDeniedReadOnly(db, () => createAuthorizedExportService(db).exportInquiry('inquiry-one', { actorId: 'actor-one', isAdmin: true }), unauthorizedError);
   } finally {
     db.close();
   }
@@ -147,7 +187,11 @@ test('invalid actor context and forged boolean authorization are rejected', () =
 test('missing access policy is rejected', () => {
   const db = seedExportDatabase();
   try {
-    assertDeniedReadOnly(db, () => createExportService(db).exportInquiry('inquiry-one', ACTOR));
+    const unauthorizedError = assertDeniedReadOnly(
+      db,
+      () => createAuthorizedExportService(db).exportInquiry('inquiry-two', ACTOR),
+    );
+    assertDeniedReadOnly(db, () => createExportService(db).exportInquiry('inquiry-one', ACTOR), unauthorizedError);
   } finally {
     db.close();
   }
@@ -156,6 +200,10 @@ test('missing access policy is rejected', () => {
 test('policy exception fails closed', () => {
   const db = seedExportDatabase();
   try {
+    const unauthorizedError = assertDeniedReadOnly(
+      db,
+      () => createAuthorizedExportService(db).exportInquiry('inquiry-two', ACTOR),
+    );
     const service = createExportService(db, {
       accessPolicy: {
         canExportInquiry() {
@@ -163,7 +211,7 @@ test('policy exception fails closed', () => {
         },
       },
     });
-    assertDeniedReadOnly(db, () => service.exportInquiry('inquiry-one', ACTOR));
+    assertDeniedReadOnly(db, () => service.exportInquiry('inquiry-one', ACTOR), unauthorizedError);
   } finally {
     db.close();
   }
@@ -172,6 +220,10 @@ test('policy exception fails closed', () => {
 test('invalid policy result fails closed', () => {
   const db = seedExportDatabase();
   try {
+    const unauthorizedError = assertDeniedReadOnly(
+      db,
+      () => createAuthorizedExportService(db).exportInquiry('inquiry-two', ACTOR),
+    );
     for (const result of [true, { allow: false }, { allowed: true }, null, undefined]) {
       const service = createExportService(db, {
         accessPolicy: {
@@ -180,11 +232,31 @@ test('invalid policy result fails closed', () => {
           },
         },
       });
-      assertDeniedReadOnly(db, () => service.exportInquiry('inquiry-one', ACTOR));
+      assertDeniedReadOnly(db, () => service.exportInquiry('inquiry-one', ACTOR), unauthorizedError);
     }
   } finally {
     db.close();
   }
+});
+
+test('policy must explicitly allow before any database read', () => {
+  let databaseReads = 0;
+  const db = {
+    prepare() {
+      databaseReads += 1;
+      throw new Error('database must not be read before policy allow');
+    },
+  };
+  const service = createExportService(db, {
+    accessPolicy: {
+      canExportInquiry() {
+        return { allow: false };
+      },
+    },
+  });
+
+  captureDenied(getThrown(() => service.exportInquiry('inquiry-one', ACTOR)));
+  assert.equal(databaseReads, 0);
 });
 
 test('authorized export is read-only and does not mutate the database', () => {
