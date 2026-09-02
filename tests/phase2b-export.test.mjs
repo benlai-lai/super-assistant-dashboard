@@ -9,6 +9,22 @@ import { createInquiryRepository } from '../server/inquiry-repository.mjs';
 import { createQuotationRepository } from '../server/quotation-repository.mjs';
 
 const NOW = '2026-01-01T00:00:00.000Z';
+const ACTOR = { actorId: 'actor-one', role: 'export-operator' };
+const DENIED_PATTERN = /Inquiry export is not available/;
+
+function allowOnly(allowedInquiryIds) {
+  const allowed = new Set(allowedInquiryIds);
+  return {
+    canExportInquiry({ actorContext, inquiryId }) {
+      assert.equal(actorContext.actorId, ACTOR.actorId);
+      return { allow: allowed.has(inquiryId) };
+    },
+  };
+}
+
+function createAuthorizedExportService(db, allowedInquiryIds = ['inquiry-one']) {
+  return createExportService(db, { accessPolicy: allowOnly(allowedInquiryIds) });
+}
 
 function countRows(db) {
   const tables = db.prepare(`
@@ -28,21 +44,52 @@ function seedExportDatabase() {
   const attachments = createAttachmentRepository(db);
 
   customers.create({ id: 'customer-one', displayName: '客戶一', contactName: '窗口', email: 'buyer@example.com', phone: '0912345678', createdAt: NOW });
+  customers.create({ id: 'customer-two', displayName: '客戶二', contactName: '第二窗口', email: 'blocked@example.com', phone: '0987654321', createdAt: NOW });
   inquiries.create({ id: 'inquiry-one', customerId: 'customer-one', title: '測試詢價', status: 'active', createdAt: NOW, updatedAt: NOW });
+  inquiries.create({ id: 'inquiry-two', customerId: 'customer-two', title: '禁止匯出詢價', status: 'active', createdAt: NOW, updatedAt: NOW });
   inquiries.addItem({ id: 'item-one', inquiryId: 'inquiry-one', description: '托特包', quantity: 100, notes: '客戶可見需求', createdAt: NOW });
+  inquiries.addItem({ id: 'item-two', inquiryId: 'inquiry-two', description: '不可洩漏品項', quantity: 1, notes: '不可洩漏需求', createdAt: NOW });
   quotations.createVersion({ id: 'quote-one', inquiryId: 'inquiry-one', versionNumber: 1, currency: 'TWD', customerTotalMinor: 500000, createdAt: NOW });
+  quotations.createVersion({ id: 'quote-two', inquiryId: 'inquiry-two', versionNumber: 1, currency: 'TWD', customerTotalMinor: 999999, createdAt: NOW });
   quotations.addOption({ id: 'option-one', quotationVersionId: 'quote-one', label: '標準方案', customerPriceMinor: 500000, currency: 'TWD', createdAt: NOW });
   quotations.addItem({ id: 'quote-item-one', quotationVersionId: 'quote-one', inquiryItemId: 'item-one', description: '托特包報價', quantity: 100, customerUnitPriceMinor: 5000, currency: 'TWD', createdAt: NOW });
   costs.createEstimate({ id: 'cost-one', inquiryId: 'inquiry-one', inquiryItemId: 'item-one', supplierLabel: '內部供應商摘要', estimatedCostMinor: 300000, currency: 'TWD', internalNotes: 'sensitive margin note', createdAt: NOW });
+  costs.createEstimate({ id: 'cost-two', inquiryId: 'inquiry-two', inquiryItemId: 'item-two', supplierLabel: '不可洩漏供應商', estimatedCostMinor: 1, currency: 'TWD', internalNotes: 'blocked sensitive note', createdAt: NOW });
   attachments.add({ id: 'attachment-one', inquiryId: 'inquiry-one', entityType: 'inquiry', entityId: 'inquiry-one', title: '雲端規格連結', url: 'https://example.com/spec', visibility: 'internal', createdAt: NOW });
+  attachments.add({ id: 'attachment-two', inquiryId: 'inquiry-two', entityType: 'inquiry', entityId: 'inquiry-two', title: '不可洩漏連結', url: 'https://example.com/blocked', visibility: 'internal', createdAt: NOW });
 
   return db;
 }
 
-test('structured JSON export contains one inquiry bundle and schemaVersion', () => {
+function getThrown(callback) {
+  try {
+    callback();
+  } catch (error) {
+    return error;
+  }
+  throw new assert.AssertionError({ message: 'Expected callback to throw' });
+}
+
+function captureDenied(error) {
+  assert.match(error.message, DENIED_PATTERN);
+  assert.equal('inquiry' in error, false);
+  assert.equal('customer' in error, false);
+  assert.equal('items' in error, false);
+  assert.equal('quotationVersions' in error, false);
+  assert.equal('attachments' in error, false);
+  assert.equal('costSummary' in error, false);
+}
+
+function assertDeniedReadOnly(db, callback) {
+  const before = countRows(db);
+  captureDenied(getThrown(callback));
+  assert.deepEqual(countRows(db), before);
+}
+
+test('authorized actor can export existing inquiry with schemaVersion', () => {
   const db = seedExportDatabase();
   try {
-    const exported = createExportService(db).exportInquiry('inquiry-one');
+    const exported = createAuthorizedExportService(db).exportInquiry('inquiry-one', ACTOR);
     assert.equal(exported.schemaVersion, 'phase2b.inquiry-export.v1');
     assert.equal(exported.inquiry.id, 'inquiry-one');
     assert.equal(exported.customer.displayName, '客戶一');
@@ -56,11 +103,95 @@ test('structured JSON export contains one inquiry bundle and schemaVersion', () 
   }
 });
 
-test('export is read-only and does not mutate the database', () => {
+test('unauthorized actor cannot export existing inquiry and receives no metadata', () => {
+  const db = seedExportDatabase();
+  try {
+    assertDeniedReadOnly(db, () => createAuthorizedExportService(db).exportInquiry('inquiry-two', ACTOR));
+  } finally {
+    db.close();
+  }
+});
+
+test('unknown inquiry uses the same generic denial as unauthorized inquiry', () => {
+  const db = seedExportDatabase();
+  try {
+    const unauthorizedError = getThrown(() => createAuthorizedExportService(db).exportInquiry('inquiry-two', ACTOR));
+    const unknownError = getThrown(() => createAuthorizedExportService(db, ['missing-inquiry']).exportInquiry('missing-inquiry', ACTOR));
+    assert.equal(unknownError.message, unauthorizedError.message);
+    captureDenied(unknownError);
+  } finally {
+    db.close();
+  }
+});
+
+test('missing actor context is rejected before export reads metadata', () => {
+  const db = seedExportDatabase();
+  try {
+    assertDeniedReadOnly(db, () => createAuthorizedExportService(db).exportInquiry('inquiry-one'));
+  } finally {
+    db.close();
+  }
+});
+
+test('invalid actor context and forged boolean authorization are rejected', () => {
+  const db = seedExportDatabase();
+  try {
+    assertDeniedReadOnly(db, () => createAuthorizedExportService(db).exportInquiry('inquiry-one', { actorId: '', role: 'export-operator' }));
+    assertDeniedReadOnly(db, () => createAuthorizedExportService(db).exportInquiry('inquiry-one', { actorId: 'actor-one', authorized: true }));
+    assertDeniedReadOnly(db, () => createAuthorizedExportService(db).exportInquiry('inquiry-one', { actorId: 'actor-one', isAdmin: true }));
+  } finally {
+    db.close();
+  }
+});
+
+test('missing access policy is rejected', () => {
+  const db = seedExportDatabase();
+  try {
+    assertDeniedReadOnly(db, () => createExportService(db).exportInquiry('inquiry-one', ACTOR));
+  } finally {
+    db.close();
+  }
+});
+
+test('policy exception fails closed', () => {
+  const db = seedExportDatabase();
+  try {
+    const service = createExportService(db, {
+      accessPolicy: {
+        canExportInquiry() {
+          throw new Error('policy backend unavailable');
+        },
+      },
+    });
+    assertDeniedReadOnly(db, () => service.exportInquiry('inquiry-one', ACTOR));
+  } finally {
+    db.close();
+  }
+});
+
+test('invalid policy result fails closed', () => {
+  const db = seedExportDatabase();
+  try {
+    for (const result of [true, { allow: false }, { allowed: true }, null, undefined]) {
+      const service = createExportService(db, {
+        accessPolicy: {
+          canExportInquiry() {
+            return result;
+          },
+        },
+      });
+      assertDeniedReadOnly(db, () => service.exportInquiry('inquiry-one', ACTOR));
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test('authorized export is read-only and does not mutate the database', () => {
   const db = seedExportDatabase();
   try {
     const before = countRows(db);
-    const exported = createExportService(db).exportInquiry('inquiry-one');
+    const exported = createAuthorizedExportService(db).exportInquiry('inquiry-one', ACTOR);
     const after = countRows(db);
     assert.deepEqual(after, before);
     assert.equal(exported.schemaVersion, 'phase2b.inquiry-export.v1');
@@ -72,7 +203,7 @@ test('export is read-only and does not mutate the database', () => {
 test('export excludes physical paths and internal sensitive fields', () => {
   const db = seedExportDatabase();
   try {
-    const exported = createExportService(db).exportInquiry('inquiry-one');
+    const exported = createAuthorizedExportService(db).exportInquiry('inquiry-one', ACTOR);
     const serialized = JSON.stringify(exported);
     assert.equal(serialized.includes('physicalPath'), false);
     assert.equal(serialized.includes('C:\\'), false);
@@ -80,15 +211,8 @@ test('export excludes physical paths and internal sensitive fields', () => {
     assert.equal(serialized.includes('sensitive margin note'), false);
     assert.equal(serialized.includes('internal_notes'), false);
     assert.equal(serialized.includes('supplier_label'), false);
-  } finally {
-    db.close();
-  }
-});
-
-test('unknown inquiry export fails closed', () => {
-  const db = openPhase2bDatabase(':memory:');
-  try {
-    assert.throws(() => createExportService(db).exportInquiry('missing-inquiry'), /Unknown inquiry/);
+    assert.equal(serialized.includes('blocked sensitive note'), false);
+    assert.equal(serialized.includes('不可洩漏'), false);
   } finally {
     db.close();
   }
@@ -113,3 +237,5 @@ test('server-side foundation does not reference V1 or V2 localStorage keys', asy
     assert.equal(text.includes('localStorage'), false);
   }
 });
+
+

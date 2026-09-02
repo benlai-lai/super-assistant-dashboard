@@ -1,11 +1,52 @@
 import { EXPORT_SCHEMA_VERSION } from './config.mjs';
 import { assertId, ensureFound } from './database.mjs';
 
-export function createExportService(db) {
+const GENERIC_EXPORT_DENIED_MESSAGE = 'Inquiry export is not available';
+
+export class InquiryExportDeniedError extends Error {
+  constructor() {
+    super(GENERIC_EXPORT_DENIED_MESSAGE);
+    this.name = 'InquiryExportDeniedError';
+  }
+}
+
+function denyExport() {
+  throw new InquiryExportDeniedError();
+}
+
+function assertActorContext(actorContext) {
+  if (!actorContext || typeof actorContext !== 'object' || Array.isArray(actorContext)) denyExport();
+  if (actorContext.authorized === true || actorContext.isAdmin === true) denyExport();
+  if (typeof actorContext.actorId !== 'string' || actorContext.actorId.length === 0) denyExport();
+}
+
+function assertAccessPolicy(accessPolicy) {
+  if (!accessPolicy || typeof accessPolicy !== 'object') denyExport();
+  if (typeof accessPolicy.canExportInquiry !== 'function') denyExport();
+}
+
+function assertPolicyAllows(result) {
+  if (!result || typeof result !== 'object' || result.allow !== true) denyExport();
+}
+
+export function createExportService(db, { accessPolicy } = {}) {
   return {
-    exportInquiry(inquiryId) {
-      assertId(inquiryId, 'inquiry id');
-      const inquiry = ensureFound(db.prepare('SELECT * FROM inquiries WHERE id = ?').get(inquiryId), 'Unknown inquiry');
+    exportInquiry(inquiryId, actorContext) {
+      try {
+        assertId(inquiryId, 'inquiry id');
+        assertActorContext(actorContext);
+        assertAccessPolicy(accessPolicy);
+        const policyResult = accessPolicy.canExportInquiry({ actorContext, inquiryId });
+        assertPolicyAllows(policyResult);
+      } catch (error) {
+        if (error instanceof InquiryExportDeniedError) throw error;
+        denyExport();
+      }
+
+      const inquiry = ensureFound(
+        db.prepare('SELECT * FROM inquiries WHERE id = ?').get(inquiryId),
+        GENERIC_EXPORT_DENIED_MESSAGE,
+      );
       const customer = ensureFound(db.prepare('SELECT * FROM customers WHERE id = ?').get(inquiry.customer_id), 'Unknown customer');
       const items = db.prepare('SELECT * FROM inquiry_items WHERE inquiry_id = ? ORDER BY created_at, id').all(inquiryId);
       const versions = db.prepare('SELECT * FROM quotation_versions WHERE inquiry_id = ? ORDER BY version_number').all(inquiryId);
