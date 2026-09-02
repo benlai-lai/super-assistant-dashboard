@@ -63,6 +63,7 @@ export async function startServer(options = {}) {
     maxBodySize = 16 * 1024,
     sessionExpiry = 24 * 60 * 60 * 1000,
     maxLoginAttempts = 5,
+    db = null,
   } = options;
 
   const creds = await setupCredentials(credentials);
@@ -74,6 +75,7 @@ export async function startServer(options = {}) {
     maxBodySize,
     sessionExpiry,
     maxLoginAttempts,
+    db,
   });
 
   await server.listen();

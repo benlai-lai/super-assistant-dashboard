@@ -3,6 +3,9 @@ import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { checkPermission, validateRoleFromSession } from './access-policy.mjs';
 import { createSessionStore } from './session-store.mjs';
+import { createCustomerRepository } from './customer-repository.mjs';
+import { createInquiryRepository } from './inquiry-repository.mjs';
+import { createCustomerInquiryApi } from './customer-inquiry-api.mjs';
 
 const scryptAsync = promisify(scrypt);
 const DUMMY_CREDENTIAL = {
@@ -126,6 +129,17 @@ export class HttpServer {
     this.host = options.host || '127.0.0.1';
     this.maxBodySize = options.maxBodySize || 16 * 1024; // 16KB
     this.sessionExpiry = options.sessionExpiry || 24 * 60 * 60 * 1000; // 24 hours
+    this.customerInquiryApi = options.customerInquiryApi || (options.db
+      ? createCustomerInquiryApi({
+        customers: createCustomerRepository(options.db),
+        inquiries: createInquiryRepository(options.db),
+        getSession: (req) => {
+          const token = this.getSessionToken(req);
+          return token ? this.sessionStore.get(token) : null;
+        },
+        parseJsonBody: (req) => this.parseJsonBody(req),
+      })
+      : null);
   }
 
   /**
@@ -371,6 +385,8 @@ export class HttpServer {
    * Route request to appropriate handler
    */
   async route(req, res) {
+    this.setSecurityHeaders(res);
+
     // Validate Host/Origin
     if (!this.validateHostOrigin(req)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
@@ -379,6 +395,11 @@ export class HttpServer {
     }
 
     const { method, url } = req;
+
+    if (this.customerInquiryApi) {
+      const handled = await this.customerInquiryApi.handle(req, res);
+      if (handled !== false) return;
+    }
 
     if (url === '/api/health' && method === 'GET') {
       this.handleHealth(req, res);
