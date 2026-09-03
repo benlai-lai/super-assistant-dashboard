@@ -1,0 +1,17 @@
+{
+  "name": "super-assistant-dashboard",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "acorn": "8.18.0"
+  },
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "lint": "node scripts/verify-baseline.mjs lint",
+    "test": "node --test",
+    "build": "node scripts/verify-baseline.mjs build"
+  }
+}
