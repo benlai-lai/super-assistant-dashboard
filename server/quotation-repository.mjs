@@ -6,8 +6,11 @@ import {
   ensureFound,
   runInTransaction,
 } from './database.mjs';
+import { createProductCategoryRepository } from './product-category-repository.mjs';
 
 export function createQuotationRepository(db) {
+  const productCategories = createProductCategoryRepository(db);
+
   function getVersion(id) {
     assertId(id, 'quotation version id');
     return db.prepare('SELECT * FROM quotation_versions WHERE id = ?').get(id) ?? null;
@@ -82,16 +85,19 @@ export function createQuotationRepository(db) {
       assertCurrency(item.currency);
       assertMinorUnits(item.customerUnitPriceMinor, 'customer unit price');
       assertIsoDateTime(item.createdAt, 'createdAt');
+      const productCategoryId = item.productCategoryId ?? null;
+      if (productCategoryId !== null) assertId(productCategoryId, 'product category id');
       return runInTransaction(db, () => {
         const version = requireDraftVersion(item.quotationVersionId);
         ensureFound(
           db.prepare('SELECT id FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(item.inquiryItemId, version.inquiry_id),
           'Inquiry item does not belong to quotation inquiry',
         );
+        if (productCategoryId !== null) productCategories.requireActive(productCategoryId);
         db.prepare(`
           INSERT INTO quotation_items
-            (id, quotation_version_id, inquiry_item_id, description, quantity, customer_unit_price_minor, currency, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (id, quotation_version_id, inquiry_item_id, description, quantity, customer_unit_price_minor, currency, created_at, product_category_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           item.id,
           item.quotationVersionId,
@@ -101,6 +107,7 @@ export function createQuotationRepository(db) {
           item.customerUnitPriceMinor,
           item.currency,
           item.createdAt,
+          productCategoryId,
         );
         return db.prepare('SELECT * FROM quotation_items WHERE id = ?').get(item.id);
       });

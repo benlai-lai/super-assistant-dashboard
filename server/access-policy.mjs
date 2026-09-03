@@ -12,6 +12,10 @@ const ACTIONS = {
   UPDATE: 'update',
   DELETE: 'delete',
   PUBLISH: 'publish',
+  CATEGORY_LIST: 'category:list',
+  CATEGORY_CREATE: 'category:create',
+  CATEGORY_RENAME: 'category:rename',
+  CATEGORY_DEACTIVATE: 'category:deactivate',
 };
 
 /**
@@ -24,6 +28,10 @@ const ROLE_PERMISSIONS = {
     [ACTIONS.UPDATE]: true,
     [ACTIONS.DELETE]: true,
     [ACTIONS.PUBLISH]: true,
+    [ACTIONS.CATEGORY_LIST]: true,
+    [ACTIONS.CATEGORY_CREATE]: true,
+    [ACTIONS.CATEGORY_RENAME]: true,
+    [ACTIONS.CATEGORY_DEACTIVATE]: true,
   },
   viewer: {
     [ACTIONS.READ]: true,
@@ -31,6 +39,10 @@ const ROLE_PERMISSIONS = {
     [ACTIONS.UPDATE]: false,
     [ACTIONS.DELETE]: false,
     [ACTIONS.PUBLISH]: false,
+    [ACTIONS.CATEGORY_LIST]: false,
+    [ACTIONS.CATEGORY_CREATE]: false,
+    [ACTIONS.CATEGORY_RENAME]: false,
+    [ACTIONS.CATEGORY_DEACTIVATE]: false,
   },
 };
 

@@ -19,6 +19,8 @@ const EXPECTED_TABLES = [
   'pdf_documents',
   'audit_logs',
   'backup_runs',
+  'product_categories',
+  'schema_migrations',
 ];
 
 function withTempDatabase(callback) {
@@ -34,7 +36,7 @@ function withTempDatabase(callback) {
   }
 }
 
-test('empty database initialization creates the Phase 2B schema only', () => {
+test('empty database initialization migrates the Phase 2B schema to C0-A version 2', () => {
   withTempDatabase((db) => {
     const tables = db.prepare(`
       SELECT name FROM sqlite_master
@@ -43,9 +45,16 @@ test('empty database initialization creates the Phase 2B schema only', () => {
     `).all().map((row) => row.name);
 
     assert.deepEqual(tables, [...EXPECTED_TABLES].sort());
-    assert.equal(getSchemaVersion(db), '1');
+    assert.equal(getSchemaVersion(db), '2');
+    assert.deepEqual(
+      db.prepare('SELECT version, name FROM schema_migrations ORDER BY version').all().map((row) => ({ ...row })),
+      [
+        { version: 1, name: 'phase2b-initial-schema' },
+        { version: 2, name: 'product-category-foundation' },
+      ],
+    );
 
-    for (const table of EXPECTED_TABLES.filter((name) => name !== 'app_meta')) {
+    for (const table of EXPECTED_TABLES.filter((name) => !['app_meta', 'schema_migrations'].includes(name))) {
       const count = db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count;
       assert.equal(count, 0, `${table} should start empty`);
     }

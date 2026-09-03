@@ -6,6 +6,8 @@ import { createSessionStore } from './session-store.mjs';
 import { createCustomerRepository } from './customer-repository.mjs';
 import { createInquiryRepository } from './inquiry-repository.mjs';
 import { createCustomerInquiryApi } from './customer-inquiry-api.mjs';
+import { createProductCategoryRepository } from './product-category-repository.mjs';
+import { createProductCategoryApi } from './product-category-api.mjs';
 
 const scryptAsync = promisify(scrypt);
 const DUMMY_CREDENTIAL = {
@@ -125,7 +127,7 @@ export class HttpServer {
       options.maxRateLimitEntries || 1000,
     );
     this.server = null;
-    this.port = options.port || 8080;
+    this.port = options.port ?? 8080;
     this.host = options.host || '127.0.0.1';
     this.maxBodySize = options.maxBodySize || 16 * 1024; // 16KB
     this.sessionExpiry = options.sessionExpiry || 24 * 60 * 60 * 1000; // 24 hours
@@ -133,6 +135,16 @@ export class HttpServer {
       ? createCustomerInquiryApi({
         customers: createCustomerRepository(options.db),
         inquiries: createInquiryRepository(options.db),
+        getSession: (req) => {
+          const token = this.getSessionToken(req);
+          return token ? this.sessionStore.get(token) : null;
+        },
+        parseJsonBody: (req) => this.parseJsonBody(req),
+      })
+      : null);
+    this.productCategoryApi = options.productCategoryApi || (options.db
+      ? createProductCategoryApi({
+        categories: createProductCategoryRepository(options.db),
         getSession: (req) => {
           const token = this.getSessionToken(req);
           return token ? this.sessionStore.get(token) : null;
@@ -395,6 +407,11 @@ export class HttpServer {
     }
 
     const { method, url } = req;
+
+    if (this.productCategoryApi) {
+      const handled = await this.productCategoryApi.handle(req, res);
+      if (handled !== false) return;
+    }
 
     if (this.customerInquiryApi) {
       const handled = await this.customerInquiryApi.handle(req, res);
