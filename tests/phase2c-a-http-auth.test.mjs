@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { scrypt, randomBytes } from 'node:crypto';
+import { createServer as createNodeHttpServer, request as requestHttp } from 'node:http';
 import { promisify } from 'node:util';
 import test from 'node:test';
 import { createHttpServer } from '../server/http-server.mjs';
@@ -27,19 +28,173 @@ async function setupTestServer(credentials, port = 0) {
   return server;
 }
 
+function rawHeadersToEntries(rawHeaders) {
+  const entries = [];
+  for (let index = 0; index < rawHeaders.length; index += 2) {
+    entries.push([rawHeaders[index].toLowerCase(), rawHeaders[index + 1]]);
+  }
+  return entries.sort();
+}
+
+function requestRawHttpResponse({ port, method, path, headers = {}, body = '' }) {
+  return new Promise((resolve, reject) => {
+    const request = requestHttp({
+      hostname: '127.0.0.1',
+      port,
+      path,
+      method,
+      headers,
+    }, (response) => {
+      const chunks = [];
+      response.on('data', (chunk) => chunks.push(chunk));
+      response.on('error', reject);
+      response.on('end', () => {
+        resolve({
+          status: response.statusCode,
+          body: Buffer.concat(chunks).toString('utf8'),
+          headers: rawHeadersToEntries(response.rawHeaders),
+        });
+      });
+    });
+    request.on('error', reject);
+    request.end(body);
+  });
+}
+
 async function getFailedLoginResponse(server, username, password, headers = {}) {
   const { port } = server.server.address();
-  const response = await fetch(`http://127.0.0.1:${port}/api/session`, {
+  return requestRawHttpResponse({
+    port,
     method: 'POST',
+    path: '/api/session',
     headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify({ username, password }),
   });
+}
+
+const HTTP_DATE_PATTERN = /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/;
+
+function normalizeDateHeaderForComparison(response) {
+  const dateHeaders = response.headers.filter(([name]) => name.toLowerCase() === 'date');
+  assert.equal(dateHeaders.length, 1, 'Response must contain exactly one Date header');
+
+  const [, dateValue] = dateHeaders[0];
+  assert.match(dateValue, HTTP_DATE_PATTERN, 'Date header must use a valid HTTP-date format');
+  const timestamp = Date.parse(dateValue);
+  assert.ok(Number.isFinite(timestamp), 'Date header must be parseable');
+  assert.equal(new Date(timestamp).toUTCString(), dateValue, 'Date header must represent a valid HTTP date');
+
   return {
-    status: response.status,
-    body: await response.text(),
-    headers: [...response.headers.entries()].sort(),
+    ...response,
+    headers: response.headers.map(([name, value]) => {
+      if (name.toLowerCase() !== 'date') return [name, value];
+      return ['date', '<valid-http-date>'];
+    }),
   };
 }
+
+test('Date header normalization permits one-second response drift only', () => {
+  const first = {
+    status: 401,
+    body: '{"error":"Invalid credentials"}',
+    headers: [
+      ['content-type', 'application/json'],
+      ['date', 'Thu, 03 Sep 2026 10:18:18 GMT'],
+      ['x-content-type-options', 'nosniff'],
+    ],
+  };
+  const oneSecondLater = {
+    ...first,
+    headers: first.headers.map(([name, value]) => [
+      name === 'date' ? 'Date' : name,
+      name === 'date' ? 'Thu, 03 Sep 2026 10:18:19 GMT' : value,
+    ]),
+  };
+
+  assert.doesNotThrow(() => normalizeDateHeaderForComparison(first));
+  assert.deepEqual(
+    normalizeDateHeaderForComparison(first),
+    normalizeDateHeaderForComparison(oneSecondLater)
+  );
+  assert.notDeepEqual(
+    normalizeDateHeaderForComparison(first),
+    normalizeDateHeaderForComparison({ ...oneSecondLater, status: 429 })
+  );
+  assert.notDeepEqual(
+    normalizeDateHeaderForComparison(first),
+    normalizeDateHeaderForComparison({ ...oneSecondLater, body: '{"error":"changed"}' })
+  );
+  assert.notDeepEqual(
+    normalizeDateHeaderForComparison(first),
+    normalizeDateHeaderForComparison({
+      ...oneSecondLater,
+      headers: oneSecondLater.headers.map(([name, value]) => [
+        name,
+        name === 'x-content-type-options' ? 'changed' : value,
+      ]),
+    })
+  );
+  assert.throws(
+    () => normalizeDateHeaderForComparison({
+      ...first,
+      headers: first.headers.filter(([name]) => name.toLowerCase() !== 'date'),
+    }),
+    /exactly one Date header/
+  );
+  assert.throws(
+    () => normalizeDateHeaderForComparison({
+      ...first,
+      headers: [
+        ...first.headers,
+        ['Date', 'Thu, 03 Sep 2026 10:18:19 GMT'],
+      ],
+    }),
+    /exactly one Date header/
+  );
+  assert.throws(
+    () => normalizeDateHeaderForComparison({
+      ...first,
+      headers: first.headers.map(([name, value]) => [
+        name,
+        name === 'date' ? 'not-a-date' : value,
+      ]),
+    }),
+    /valid HTTP-date format/
+  );
+});
+
+test('raw HTTP response capture preserves Date header cardinality', async () => {
+  const firstDate = 'Thu, 03 Sep 2026 10:18:18 GMT';
+  const secondDate = 'Thu, 03 Sep 2026 10:18:19 GMT';
+  const server = createNodeHttpServer((request, response) => {
+    if (request.url === '/missing') response.sendDate = false;
+    if (request.url === '/duplicate') response.setHeader('Date', [firstDate, secondDate]);
+    if (request.url === '/valid') response.setHeader('Date', firstDate);
+    response.end('ok');
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+
+  try {
+    const { port } = server.address();
+    const valid = await requestRawHttpResponse({ port, method: 'GET', path: '/valid' });
+    const missing = await requestRawHttpResponse({ port, method: 'GET', path: '/missing' });
+    const duplicate = await requestRawHttpResponse({ port, method: 'GET', path: '/duplicate' });
+
+    assert.equal(valid.headers.filter(([name]) => name.toLowerCase() === 'date').length, 1);
+    assert.equal(missing.headers.filter(([name]) => name.toLowerCase() === 'date').length, 0);
+    assert.equal(duplicate.headers.filter(([name]) => name.toLowerCase() === 'date').length, 2);
+    assert.doesNotThrow(() => normalizeDateHeaderForComparison(valid));
+    assert.throws(() => normalizeDateHeaderForComparison(missing), /exactly one Date header/);
+    assert.throws(() => normalizeDateHeaderForComparison(duplicate), /exactly one Date header/);
+  } finally {
+    await new Promise((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  }
+});
 
 async function makeRequest(url, method = 'GET', body = null, cookies = '') {
   const baseUrl = new URL(url);
@@ -213,7 +368,10 @@ test('HTTP Server - POST /api/session with unknown username', async () => {
     try {
       const unknown = await getFailedLoginResponse(server, 'unknown@example.com', 'wrong-password');
       const wrongPassword = await getFailedLoginResponse(server, 'known@example.com', 'wrong-password');
-      assert.deepEqual(unknown, wrongPassword);
+      assert.deepEqual(
+        normalizeDateHeaderForComparison(unknown),
+        normalizeDateHeaderForComparison(wrongPassword)
+      );
     } finally {
       await server.close();
     }
