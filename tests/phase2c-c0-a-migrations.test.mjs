@@ -206,8 +206,8 @@ test('C0-A migration - non-canonical app_meta version strings fail closed before
 test('C0-A migration - migration modules have no import-time filesystem side effects', async () => {
   await withTempDirAsync(async (dir) => {
     const before = readdirSync(dir);
-    await import(`../server/migrations/index.mjs?side-effect-check=${Date.now()}`);
-    await import(`../server/database.mjs?side-effect-check=${Date.now()}`);
+    await import('../server/migrations/index.mjs?side-effect-check=fresh-migrations');
+    await import('../server/database.mjs?side-effect-check=fresh-database');
     assert.deepEqual(readdirSync(dir), before);
   });
 });
