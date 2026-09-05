@@ -7,6 +7,7 @@ import {
 import {
   QuotationProjectionDeniedError,
   QuotationProjectionNotFoundError,
+  QuotationProjectionValidationError,
 } from './quotation-projection.mjs';
 
 const DECISIONS = new Set(['APPROVED', 'RETURNED']);
@@ -143,6 +144,9 @@ export function createQuotationApi({ projections, approvals, getSession, parseJs
       }
       if (error instanceof ApprovalNotFoundError || error instanceof QuotationProjectionNotFoundError) {
         return send(res, 404, { error: 'Not found' });
+      }
+      if (error instanceof QuotationProjectionValidationError) {
+        return send(res, 409, { error: '報價資料不符合輸出條件。' });
       }
       if (error instanceof ApprovalConflictError) return send(res, 409, { error: 'Conflict' });
       return send(res, 500, { error: 'Internal Server Error' });

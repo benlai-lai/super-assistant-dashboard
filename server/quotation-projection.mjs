@@ -1,5 +1,6 @@
 export class QuotationProjectionNotFoundError extends Error {}
 export class QuotationProjectionDeniedError extends Error {}
+export class QuotationProjectionValidationError extends Error {}
 
 function requireActor(actor) {
   if (!actor || typeof actor !== 'object' || Array.isArray(actor)) {
@@ -28,11 +29,15 @@ function invalidCustomerProjection() {
   throw new QuotationProjectionNotFoundError('Quotation projection is not available');
 }
 
-function customerField(record, key) {
+function invalidCustomerQuotationData() {
+  throw new QuotationProjectionValidationError('Quotation projection is not available');
+}
+
+function customerField(record, key, onMissing = invalidCustomerProjection) {
   if (!record || typeof record !== 'object' || Array.isArray(record)
     || ![null, Object.prototype].includes(Object.getPrototypeOf(record))) invalidCustomerProjection();
   const descriptor = Object.getOwnPropertyDescriptor(record, key);
-  if (!descriptor || !Object.hasOwn(descriptor, 'value')) invalidCustomerProjection();
+  if (!descriptor || !Object.hasOwn(descriptor, 'value')) onMissing();
   return descriptor.value;
 }
 
@@ -48,14 +53,14 @@ function customerInteger(value, minimum = 0) {
 }
 
 function customerCurrency(value, expected = value) {
-  if (typeof value !== 'string' || !/^[A-Z]{3}$/.test(value) || value !== expected) invalidCustomerProjection();
+  if (typeof value !== 'string' || !/^[A-Z]{3}$/.test(value) || value !== expected) invalidCustomerQuotationData();
   return value;
 }
 
 function customerValidUntil(value) {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) invalidCustomerProjection();
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) invalidCustomerQuotationData();
   const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString() !== value) invalidCustomerProjection();
+  if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString() !== value) invalidCustomerQuotationData();
   return value;
 }
 
@@ -165,8 +170,8 @@ export function createQuotationProjection({ quotations, costs, approvals }) {
         || (actor.role === 'viewer' && status === 'published');
       requireVisibleSource(source, visible);
 
-      const currency = customerCurrency(customerField(version, 'currency'));
-      const validUntil = customerValidUntil(customerField(version, 'valid_until'));
+      const currency = customerCurrency(customerField(version, 'currency', invalidCustomerQuotationData));
+      const validUntil = customerValidUntil(customerField(version, 'valid_until', invalidCustomerQuotationData));
       const sourceItems = customerField(source, 'items');
       const sourceOptions = customerField(source, 'options');
       if (!Array.isArray(sourceItems) || !Array.isArray(sourceOptions)) invalidCustomerProjection();
@@ -176,7 +181,7 @@ export function createQuotationProjection({ quotations, costs, approvals }) {
       // Build fresh arrays without invoking repository-owned map/iterator/species hooks.
       for (let index = 0; index < sourceItems.length; index += 1) {
         const item = sourceItems[index];
-        customerCurrency(customerField(item, 'currency'), currency);
+        customerCurrency(customerField(item, 'currency', invalidCustomerQuotationData), currency);
         const quantity = customerInteger(customerField(item, 'quantity'), 1);
         const unitPriceMinor = customerInteger(customerField(item, 'customer_unit_price_minor'));
         const itemTotal = customerInteger(quantity * unitPriceMinor);
@@ -193,7 +198,7 @@ export function createQuotationProjection({ quotations, costs, approvals }) {
         options.push({
           label: customerText(customerField(option, 'label')),
           priceMinor: customerInteger(customerField(option, 'customer_price_minor')),
-          currency: customerCurrency(customerField(option, 'currency'), currency),
+          currency: customerCurrency(customerField(option, 'currency', invalidCustomerQuotationData), currency),
         });
       }
 

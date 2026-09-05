@@ -20,6 +20,7 @@ import {
   createQuotationProjection,
   QuotationProjectionDeniedError,
   QuotationProjectionNotFoundError,
+  QuotationProjectionValidationError,
 } from '../server/quotation-projection.mjs';
 import { createQuotationRepository } from '../server/quotation-repository.mjs';
 
@@ -386,22 +387,31 @@ async function captureQuotationResponse(api, method, url) {
 
 test('C0-B customer boundary - missing expiry and mixed item or option currency fail closed without writes or conversion', async () => {
   const db = openPhase2bDatabase(':memory:');
+  let server;
   try {
     let approvalId = 0;
     const repos = createRepos(db, { now: () => LATER, createId: () => `boundary-approval-${++approvalId}` });
     seedFoundation(repos);
     const cases = [
-      ['no-expiry', null, 'TWD', 'TWD', 404],
-      ['omitted-expiry', undefined, 'TWD', 'TWD', 404],
-      ['invalid-calendar', '2026-02-30T00:00:00.000Z', 'TWD', 'TWD', 404],
-      ['mixed-item', VALID_UNTIL, 'USD', 'TWD', 404],
-      ['mixed-option', VALID_UNTIL, 'TWD', 'USD', 404],
+      ['no-expiry', null, 'TWD', 'TWD', 409],
+      ['omitted-expiry', undefined, 'TWD', 'TWD', 409],
+      ['empty-expiry', '', 'TWD', 'TWD', 409],
+      ['blank-expiry', ' ', 'TWD', 'TWD', 409],
+      ['invalid-format', '2026/02/01', 'TWD', 'TWD', 409],
+      ['invalid-calendar', '2026-02-30T00:00:00.000Z', 'TWD', 'TWD', 409],
+      ['mixed-item', VALID_UNTIL, 'USD', 'TWD', 409],
+      ['mixed-option', VALID_UNTIL, 'TWD', 'USD', 409],
+      ['missing-version-currency', VALID_UNTIL, 'TWD', 'TWD', 409],
+      ['missing-item-currency', VALID_UNTIL, 'TWD', 'TWD', 409],
+      ['missing-option-currency', VALID_UNTIL, 'TWD', 'TWD', 409],
       ['valid', VALID_UNTIL, 'TWD', 'TWD', 200],
     ];
     for (const [index, [id, validUntil, itemCurrency, optionCurrency]] of cases.entries()) {
       repos.quotations.createVersion({
         id, inquiryId: 'inquiry-one', versionNumber: index + 1, ownerActorId: 'editor-one',
-        currency: 'TWD', customerTotalMinor: 100, validUntil, lockedExchangeRateMicros: 31000000,
+        currency: 'TWD', customerTotalMinor: 100,
+        validUntil: ['empty-expiry', 'blank-expiry', 'invalid-format'].includes(id) ? VALID_UNTIL : validUntil,
+        lockedExchangeRateMicros: 31000000,
         internalNotes: 'BOUNDARY-INTERNAL-CANARY', createdAt: NOW,
       });
       repos.quotations.addItem({
@@ -412,8 +422,19 @@ test('C0-B customer boundary - missing expiry and mixed item or option currency 
         id: `${id}-option`, quotationVersionId: id, label: 'Public option', customerPriceMinor: 100,
         currency: optionCurrency, createdAt: NOW,
       });
+      // Isolated legacy-data fixtures bypass input validation without changing the schema.
+      if (['empty-expiry', 'blank-expiry', 'invalid-format'].includes(id)) {
+        db.prepare('UPDATE quotation_versions SET valid_until = ? WHERE id = ?').run(validUntil, id);
+      }
+      if (id === 'missing-version-currency') db.prepare('UPDATE quotation_versions SET currency = ? WHERE id = ?').run('', id);
+      if (id === 'missing-item-currency') db.prepare('UPDATE quotation_items SET currency = ? WHERE id = ?').run('', `${id}-item`);
+      if (id === 'missing-option-currency') db.prepare('UPDATE quotation_options SET currency = ? WHERE id = ?').run('', `${id}-option`);
       repos.approvals.decide({ quotationVersionId: id, actorId: 'approver-one', decision: 'APPROVED', reason: 'BOUNDARY-APPROVAL-CANARY' });
     }
+    repos.quotations.createVersion({
+      id: 'hidden-invalid', inquiryId: 'inquiry-one', versionNumber: cases.length + 1,
+      ownerActorId: 'editor-one', currency: 'TWD', validUntil: null, createdAt: NOW,
+    });
     const snapshot = () => JSON.stringify([
       repos.quotations.listVersions('inquiry-one'),
       ...cases.map(([id]) => [repos.quotations.listItems(id), repos.quotations.listOptions(id), repos.approvals.listForQuotation(id)]),
@@ -423,6 +444,14 @@ test('C0-B customer boundary - missing expiry and mixed item or option currency 
     let sensitiveCalls = 0;
     const denied = new Proxy({}, { get() { sensitiveCalls += 1; throw new Error('sensitive repository called'); } });
     const projections = createQuotationProjection({ quotations: repos.quotations, costs: denied, approvals: denied });
+    server = createHttpServer({ port: 0, host: '127.0.0.1', credentials: await createCredentials(), db });
+    await server.listen();
+    const baseUrl = `http://127.0.0.1:${server.server.address().port}`;
+    const cookies = {};
+    for (const username of ['editor-one', 'editor-two', 'approver-one', 'viewer-one', 'unknown-one']) {
+      cookies[username] = await login(baseUrl, username);
+    }
+    const invalidBody = { error: '報價資料不符合輸出條件。' };
     for (const actor of [
       { actorId: 'editor-one', role: 'editor' }, { actorId: 'approver-one', role: 'approver' }, { actorId: 'viewer-one', role: 'viewer' },
     ]) {
@@ -430,20 +459,55 @@ test('C0-B customer boundary - missing expiry and mixed item or option currency 
       for (const [id, validUntil, , , expectedStatus] of cases) {
         const response = await captureQuotationResponse(api, 'GET', `/api/quotations/${id}/customer`);
         assert.equal(response.status, expectedStatus, `${actor.role} ${id}`);
-        if (expectedStatus === 404) assert.deepEqual(response.body, { error: 'Not found' });
+        if (expectedStatus === 409) assert.deepEqual(response.body, invalidBody);
         else {
-          assert.equal(response.body.quotation.quotation.validUntil, validUntil);
-          assert.equal(response.body.quotation.quotation.subtotalMinor, 100);
-          assert.equal(response.body.quotation.quotation.totalMinor, 100);
+          assert.deepEqual(response.body, { quotation: {
+            quotation: { versionNumber: cases.length, status: 'published', currency: 'TWD', validUntil,
+              shippingDisplay: null, subtotalMinor: 100, totalMinor: 100 },
+            customer: { displayName: '客戶一', contactName: '王小姐' },
+            items: [{ description: 'Public item', quantity: 1, unitPriceMinor: 100, subtotalMinor: 100 }],
+            options: [{ label: 'Public option', priceMinor: 100, currency: 'TWD' }],
+          } });
         }
+        const http = await request(baseUrl, `/api/quotations/${id}/customer`, 'GET', undefined, cookies[actor.actorId]);
+        assert.deepEqual({ status: http.status, body: http.body }, response, `HTTP ${actor.role} ${id}`);
         assert.equal(JSON.stringify(response).includes('CANARY'), false);
         assert.equal(snapshot(), before);
       }
+      for (const path of [['version', 'currency'], ['items', 0, 'currency'], ['options', 0, 'currency']]) {
+        const source = structuredClone(repos.quotations.getProjectionSource('valid'));
+        const record = path.slice(0, -1).reduce((value, key) => value[key], source);
+        delete record[path.at(-1)];
+        const missingCurrency = createQuotationProjection({ quotations: { getProjectionSource: () => source }, costs: denied, approvals: denied });
+        const missingApi = createQuotationApi({ projections: missingCurrency, approvals: denied, getSession: () => actor });
+        assert.deepEqual(await captureQuotationResponse(missingApi, 'GET', '/api/quotations/valid/customer'),
+          { status: 409, body: invalidBody }, `${actor.role} missing ${path.join('.')}`);
+      }
     }
+    for (const id of [...cases.filter((entry) => entry[4] === 409).map(([id]) => id), 'hidden-invalid', 'missing-quotation']) {
+      const hidden = await request(baseUrl, `/api/quotations/${id}/customer`, 'GET', undefined, cookies['editor-two']);
+      assert.deepEqual({ status: hidden.status, body: hidden.body }, { status: 404, body: { error: 'Not found' } });
+      for (const cookie of [undefined, cookies['unknown-one']]) {
+        const unauthorized = await request(baseUrl, `/api/quotations/${id}/customer`, 'GET', undefined, cookie);
+        assert.deepEqual({ status: unauthorized.status, body: unauthorized.body }, { status: 401, body: { error: 'Unauthorized' } });
+      }
+      for (const cookie of [cookies['editor-one'], cookies['viewer-one']]) {
+        const forbidden = await request(baseUrl, `/api/quotations/${id}/approval-decisions`, 'POST', { decision: 'invalid' }, cookie);
+        assert.deepEqual({ status: forbidden.status, body: forbidden.body }, { status: 403, body: { error: 'Forbidden' } });
+      }
+    }
+    for (const id of ['hidden-invalid', 'missing-quotation']) {
+      const hidden = await request(baseUrl, `/api/quotations/${id}/customer`, 'GET', undefined, cookies['viewer-one']);
+      assert.deepEqual({ status: hidden.status, body: hidden.body }, { status: 404, body: { error: 'Not found' } });
+    }
+    assert.equal(snapshot(), before);
     assert.equal(sensitiveCalls, 0);
     assert.equal(repos.projections.internal('mixed-item', { actorId: 'approver-one', role: 'approver' }).items[0].currency, 'USD');
     assert.equal(repos.projections.internal('no-expiry', { actorId: 'approver-one', role: 'approver' }).quotationVersion.validUntil, null);
-  } finally { db.close(); }
+  } finally {
+    if (server) await server.close();
+    db.close();
+  }
 });
 
 test('C0-B customer boundary - scalar validation and fresh nested mappers reject payload and serialization hooks', async () => {
@@ -459,9 +523,9 @@ test('C0-B customer boundary - scalar validation and fresh nested mappers reject
     const projections = createQuotationProjection({ quotations: { getProjectionSource: () => source }, costs: denied, approvals: denied });
     const actor = { actorId: 'editor-one', role: 'editor' };
     const api = createQuotationApi({ projections, approvals: denied, getSession: () => actor, parseJsonBody: () => { throw new Error('GET parsed body'); } });
-    const expectDenied = async () => assert.deepEqual(
+    const expectDenied = async (status = 404) => assert.deepEqual(
       await captureQuotationResponse(api, 'GET', '/api/quotations/quotation-one/customer'),
-      { status: 404, body: { error: 'Not found' } },
+      { status, body: { error: status === 409 ? '報價資料不符合輸出條件。' : 'Not found' } },
     );
     const marker = 'NESTED-SECRET-CANARY';
     const canary = {
@@ -483,13 +547,13 @@ test('C0-B customer boundary - scalar validation and fresh nested mappers reject
       for (const value of [canary, [canary]]) {
         source = structuredClone(baseline);
         setField(path, value);
-        await expectDenied();
+        await expectDenied(['currency', 'valid_until'].includes(path.at(-1)) ? 409 : 404);
       }
     }
     for (const value of [null, undefined, '', ' ', 'invalid', '2026-02-29T00:00:00.000Z', '2026-01-01T25:00:00.000Z', new Date(VALID_UNTIL)]) {
       source = structuredClone(baseline);
       source.version.valid_until = value;
-      await expectDenied();
+      await expectDenied(409);
     }
     for (const value of [new String(marker), Buffer.from(marker), 1n, Symbol(marker), () => marker]) {
       source = structuredClone(baseline);
@@ -510,15 +574,17 @@ test('C0-B customer boundary - scalar validation and fresh nested mappers reject
     source.items = [0, 1].map(() => ({ ...baseline.items[0], quantity: 1, customer_unit_price_minor: Number.MAX_SAFE_INTEGER }));
     await expectDenied();
     for (const change of [
-      () => { delete source.version.valid_until; },
       () => { source.items = { map: () => [canary] }; },
       () => { source.options = null; },
       () => { source.items = [null]; },
-      () => { source.options[0].currency = 'USD'; },
-      () => { source.version.currency = 'twd'; },
       () => { source.items[0].quantity = 0; },
       () => { source.version.version_number = 0; },
     ]) { source = structuredClone(baseline); change(); await expectDenied(); }
+    for (const change of [
+      () => { delete source.version.valid_until; },
+      () => { source.options[0].currency = 'USD'; },
+      () => { source.version.currency = 'twd'; },
+    ]) { source = structuredClone(baseline); change(); await expectDenied(409); }
 
     source = structuredClone(baseline);
     let hookCalls = 0;
@@ -547,6 +613,21 @@ test('C0-B customer boundary - scalar validation and fresh nested mappers reject
     assert.equal(hookCalls, 0);
     Object.defineProperty(source.items[0], 'description', { get: forbiddenHook });
     await expectDenied();
+    for (const path of [['version', 'currency'], ['version', 'valid_until'], ['items', 0, 'currency'], ['options', 0, 'currency']]) {
+      source = structuredClone(baseline);
+      const record = path.slice(0, -1).reduce((value, key) => value[key], source);
+      Object.defineProperty(record, path.at(-1), { get: forbiddenHook });
+      await expectDenied(409);
+      source.version.owner_actor_id = 'editor-two';
+      await expectDenied();
+      assert.equal(hookCalls, 0);
+    }
+    source = structuredClone(baseline);
+    source.version.owner_actor_id = 'editor-two';
+    source.version.valid_until = '';
+    source.version.currency = canary;
+    source.items = null;
+    await expectDenied();
     assert.equal(hookCalls, 0);
     assert.equal(sensitiveCalls, 0);
   } finally { db.close(); }
@@ -555,14 +636,21 @@ test('C0-B customer boundary - scalar validation and fresh nested mappers reject
 test('C0-B quotation API - only parser-origin status is public and repository errors are sanitized', async () => {
   const marker = 'REPOSITORY-SECRET-CANARY';
   const actor = { actorId: 'approver-one', role: 'approver' };
-  for (const status of [400, 401, 403, 404, 413, 415, 422, 500, '400', undefined]) {
+  for (const status of [400, 401, 403, 404, 409, 413, 415, 422, 500, '400', undefined]) {
     for (const [method, suffix] of [['GET', 'internal'], ['GET', 'customer'], ['POST', 'approval-decisions']]) {
-      const fail = () => { throw Object.assign(new Error(marker), { status, nested: { marker } }); };
+      const fail = () => { throw Object.assign(new Error(marker), { status, name: 'QuotationProjectionValidationError', nested: { marker } }); };
       const api = createQuotationApi({ projections: { internal: fail, customer: fail }, approvals: { decide: fail }, getSession: () => actor, parseJsonBody: async () => ({ decision: 'APPROVED' }) });
       assert.deepEqual(await captureQuotationResponse(api, method, `/api/quotations/quotation-one/${suffix}`),
         { status: 500, body: { error: 'Internal Server Error' } });
     }
   }
+  const controlledApi = createQuotationApi({
+    projections: { customer() { throw Object.assign(new QuotationProjectionValidationError(marker), { status: 200, nested: { marker } }); } },
+    approvals: {}, getSession: () => actor,
+  });
+  const controlled = await captureQuotationResponse(controlledApi, 'GET', '/api/quotations/quotation-one/customer');
+  assert.deepEqual(controlled, { status: 409, body: { error: '報價資料不符合輸出條件。' } });
+  assert.equal(JSON.stringify(controlled).includes(marker), false);
   for (const [status, message, expectedStatus, expectedMessage] of [
     [400, 'Malformed JSON', 400, 'Malformed JSON'], [400, marker, 400, 'Bad Request'],
     [413, marker, 413, 'Payload Too Large'], [415, marker, 415, 'Unsupported Media Type'],
