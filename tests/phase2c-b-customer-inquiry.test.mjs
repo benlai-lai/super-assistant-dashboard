@@ -14,6 +14,7 @@ async function createCredentials() {
   return {
     editor: { username: 'editor', passwordHash: hash.toString('hex'), salt: salt.toString('hex'), role: 'editor' },
     viewer: { username: 'viewer', passwordHash: hash.toString('hex'), salt: salt.toString('hex'), role: 'viewer' },
+    approver: { username: 'approver', passwordHash: hash.toString('hex'), salt: salt.toString('hex'), role: 'approver' },
   };
 }
 
@@ -111,6 +112,87 @@ test('Phase 2C-B - viewer reads but every write is denied before repository look
     assert.equal(response.status, 403);
     const create = await request(context.baseUrl, '/api/customers', 'POST', { displayName: 'nope', role: 'editor' }, viewerCookie);
     assert.equal(create.status, 403);
+  } finally {
+    await closeContext(context);
+  }
+});
+
+test('Phase 2C-B - approver reads existing contracts but writes fail before parsing or lookup and sensitive canaries stay isolated', async () => {
+  const context = await setup();
+  try {
+    const editor = await login(context.baseUrl, 'editor');
+    const approver = await login(context.baseUrl, 'approver');
+    const customer = await request(context.baseUrl, '/api/customers', 'POST', { displayName: '可見客戶' }, editor);
+    const inquiry = await request(context.baseUrl, '/api/inquiries', 'POST', {
+      customerId: customer.body.customer.id,
+      title: '可見詢價',
+    }, editor);
+    const item = await request(context.baseUrl, `/api/inquiries/${inquiry.body.inquiry.id}/items`, 'POST', {
+      description: '可見品項', quantity: 2,
+    }, editor);
+
+    context.db.prepare(`
+      INSERT INTO quotation_versions
+        (id, inquiry_id, version_number, status, currency, customer_total_minor, created_at,
+         owner_actor_id, approval_status, locked_exchange_rate_micros, margin_minor,
+         margin_rate_basis_points, internal_notes)
+      VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?)
+    `).run(
+      'quote-contract-canary', inquiry.body.inquiry.id, 1, 'TWD', 5000, NOW,
+      'editor', 31000000, 1200, 2400, 'INTERNAL-NOTES-CANARY',
+    );
+    context.db.prepare(`
+      INSERT INTO cost_estimates
+        (id, inquiry_id, inquiry_item_id, supplier_label, estimated_cost_minor, currency, internal_notes, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('cost-contract-canary', inquiry.body.inquiry.id, item.body.item.id, 'SUPPLIER-CANARY', 3000, 'TWD', 'COST-CANARY', NOW);
+    context.db.prepare(`
+      INSERT INTO quotation_approvals
+        (id, quotation_version_id, decision, approver_actor_id, reason, created_at)
+      VALUES (?, ?, 'RETURNED', ?, ?, ?)
+    `).run('approval-contract-canary', 'quote-contract-canary', 'approver', 'APPROVAL-CANARY', NOW);
+    context.db.prepare(`
+      INSERT INTO audit_logs (id, entity_type, entity_id, action, payload_json, created_at)
+      VALUES (?, 'quotation_version', ?, 'canary', ?, ?)
+    `).run('audit-contract-canary', 'quote-contract-canary', '{"secret":"AUDIT-CANARY"}', NOW);
+
+    const reads = await Promise.all([
+      request(context.baseUrl, '/api/customers', 'GET', undefined, approver),
+      request(context.baseUrl, `/api/customers/${customer.body.customer.id}`, 'GET', undefined, approver),
+      request(context.baseUrl, '/api/inquiries', 'GET', undefined, approver),
+      request(context.baseUrl, `/api/inquiries/${inquiry.body.inquiry.id}`, 'GET', undefined, approver),
+      request(context.baseUrl, `/api/inquiries/${inquiry.body.inquiry.id}/items`, 'GET', undefined, approver),
+    ]);
+    for (const response of reads) assert.equal(response.status, 200);
+    const serialized = JSON.stringify(reads.map((response) => response.body));
+    for (const canary of ['INTERNAL-NOTES-CANARY', 'SUPPLIER-CANARY', 'COST-CANARY', 'APPROVAL-CANARY', 'AUDIT-CANARY']) {
+      assert.equal(serialized.includes(canary), false);
+    }
+
+    const denied = await Promise.all([
+      request(context.baseUrl, '/api/customers', 'POST', { displayName: 'nope', role: 'editor', authorized: true }, approver),
+      request(context.baseUrl, `/api/customers/${customer.body.customer.id}`, 'PATCH', { displayName: 'nope' }, approver),
+      request(context.baseUrl, '/api/inquiries', 'POST', { customerId: customer.body.customer.id, title: 'nope' }, approver),
+      request(context.baseUrl, `/api/inquiries/${inquiry.body.inquiry.id}`, 'PATCH', { title: 'nope' }, approver),
+      request(context.baseUrl, `/api/inquiries/${inquiry.body.inquiry.id}/items`, 'POST', { description: 'nope', quantity: 1 }, approver),
+      request(context.baseUrl, `/api/inquiries/${inquiry.body.inquiry.id}/items/${item.body.item.id}`, 'PATCH', { quantity: 9 }, approver),
+      request(context.baseUrl, '/api/customers/missing', 'PATCH', { displayName: 'nope' }, approver),
+    ]);
+    for (const response of denied) {
+      assert.equal(response.status, 403);
+      assert.deepEqual(response.body, { error: 'Forbidden' });
+    }
+
+    const malformed = await fetch(`${context.baseUrl}/api/customers`, {
+      method: 'POST',
+      headers: {
+        Host: `127.0.0.1:${new URL(context.baseUrl).port}`,
+        'Content-Type': 'application/json',
+        Cookie: `bk_dashboard_session=${approver}`,
+      },
+      body: '{',
+    });
+    assert.equal(malformed.status, 403);
   } finally {
     await closeContext(context);
   }

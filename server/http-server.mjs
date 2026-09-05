@@ -8,6 +8,11 @@ import { createInquiryRepository } from './inquiry-repository.mjs';
 import { createCustomerInquiryApi } from './customer-inquiry-api.mjs';
 import { createProductCategoryRepository } from './product-category-repository.mjs';
 import { createProductCategoryApi } from './product-category-api.mjs';
+import { createQuotationRepository } from './quotation-repository.mjs';
+import { createCostRepository } from './cost-repository.mjs';
+import { createApprovalRepository } from './approval-repository.mjs';
+import { createQuotationProjection } from './quotation-projection.mjs';
+import { createQuotationApi } from './quotation-api.mjs';
 
 const scryptAsync = promisify(scrypt);
 const DUMMY_CREDENTIAL = {
@@ -152,6 +157,21 @@ export class HttpServer {
         parseJsonBody: (req) => this.parseJsonBody(req),
       })
       : null);
+    this.quotationApi = options.quotationApi || null;
+    if (!this.quotationApi && options.db) {
+      const quotations = createQuotationRepository(options.db);
+      const costs = createCostRepository(options.db);
+      const approvals = createApprovalRepository(options.db, options.approvalOptions);
+      this.quotationApi = createQuotationApi({
+        projections: createQuotationProjection({ quotations, costs, approvals }),
+        approvals,
+        getSession: (req) => {
+          const token = this.getSessionToken(req);
+          return token ? this.sessionStore.get(token) : null;
+        },
+        parseJsonBody: (req) => this.parseJsonBody(req),
+      });
+    }
   }
 
   /**
@@ -407,6 +427,11 @@ export class HttpServer {
     }
 
     const { method, url } = req;
+
+    if (this.quotationApi) {
+      const handled = await this.quotationApi.handle(req, res);
+      if (handled !== false) return;
+    }
 
     if (this.productCategoryApi) {
       const handled = await this.productCategoryApi.handle(req, res);

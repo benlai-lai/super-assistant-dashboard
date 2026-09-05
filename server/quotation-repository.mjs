@@ -8,6 +8,19 @@ import {
 } from './database.mjs';
 import { createProductCategoryRepository } from './product-category-repository.mjs';
 
+function assertOptionalString(value, fieldName) {
+  if (value !== undefined && value !== null && typeof value !== 'string') {
+    throw new Error(`${fieldName} must be a string`);
+  }
+}
+
+function assertOptionalInteger(value, fieldName, { positive = false } = {}) {
+  if (value === undefined || value === null) return;
+  if (!Number.isSafeInteger(value) || (positive && value < 1)) {
+    throw new Error(`${fieldName} must be ${positive ? 'a positive' : 'an'} integer`);
+  }
+}
+
 export function createQuotationRepository(db) {
   const productCategories = createProductCategoryRepository(db);
 
@@ -35,15 +48,24 @@ export function createQuotationRepository(db) {
     createVersion(version) {
       assertId(version.id, 'quotation version id');
       assertId(version.inquiryId, 'inquiry id');
+      if (version.ownerActorId !== undefined && version.ownerActorId !== null) assertId(version.ownerActorId, 'owner actor id');
       assertCurrency(version.currency);
       assertMinorUnits(version.customerTotalMinor ?? 0, 'customer total');
       assertIsoDateTime(version.createdAt, 'createdAt');
+      if (version.validUntil !== undefined && version.validUntil !== null) assertIsoDateTime(version.validUntil, 'validUntil');
+      assertOptionalString(version.shippingDisplay, 'shippingDisplay');
+      assertOptionalInteger(version.lockedExchangeRateMicros, 'lockedExchangeRateMicros', { positive: true });
+      assertOptionalInteger(version.marginMinor, 'marginMinor');
+      assertOptionalInteger(version.marginRateBasisPoints, 'marginRateBasisPoints');
+      assertOptionalString(version.internalNotes, 'internalNotes');
       return runInTransaction(db, () => {
         ensureFound(db.prepare('SELECT id FROM inquiries WHERE id = ?').get(version.inquiryId), 'Unknown inquiry');
         db.prepare(`
           INSERT INTO quotation_versions
-            (id, inquiry_id, version_number, status, currency, customer_total_minor, created_at, published_at)
-          VALUES (?, ?, ?, 'draft', ?, ?, ?, NULL)
+            (id, inquiry_id, version_number, status, currency, customer_total_minor, created_at, published_at,
+             owner_actor_id, valid_until, shipping_display, locked_exchange_rate_micros,
+             margin_minor, margin_rate_basis_points, internal_notes)
+          VALUES (?, ?, ?, 'draft', ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           version.id,
           version.inquiryId,
@@ -51,6 +73,13 @@ export function createQuotationRepository(db) {
           version.currency,
           version.customerTotalMinor ?? 0,
           version.createdAt,
+          version.ownerActorId ?? null,
+          version.validUntil ?? null,
+          version.shippingDisplay ?? null,
+          version.lockedExchangeRateMicros ?? null,
+          version.marginMinor ?? null,
+          version.marginRateBasisPoints ?? null,
+          version.internalNotes ?? null,
         );
         return getVersion(version.id);
       });
@@ -141,6 +170,27 @@ export function createQuotationRepository(db) {
     listItems(versionId) {
       assertId(versionId, 'quotation version id');
       return db.prepare('SELECT * FROM quotation_items WHERE quotation_version_id = ? ORDER BY created_at, id').all(versionId);
+    },
+    getProjectionSource(versionId) {
+      assertId(versionId, 'quotation version id');
+      const context = db.prepare(`
+        SELECT
+          qv.*,
+          i.title AS inquiry_title,
+          i.status AS inquiry_status,
+          c.display_name AS customer_display_name,
+          c.contact_name AS customer_contact_name
+        FROM quotation_versions qv
+        JOIN inquiries i ON i.id = qv.inquiry_id
+        JOIN customers c ON c.id = i.customer_id
+        WHERE qv.id = ?
+      `).get(versionId);
+      if (!context) return null;
+      return {
+        version: context,
+        items: this.listItems(versionId),
+        options: this.listOptions(versionId),
+      };
     },
   };
 }

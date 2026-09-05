@@ -22,6 +22,11 @@ const REGISTRY = Object.freeze([
     name: 'product-category-foundation',
     sqlUrl: new URL('./002-product-category-foundation.sql', import.meta.url),
   }),
+  Object.freeze({
+    version: 3,
+    name: 'approver-projection-foundation',
+    sqlUrl: new URL('./003-approver-projection-foundation.sql', import.meta.url),
+  }),
 ]);
 
 function checksum(sql) {
@@ -58,12 +63,82 @@ function assertUtcTimestamp(value) {
   }
 }
 
+function* migrationSqlTokens(sql) {
+  for (let index = 0; index < sql.length;) {
+    const char = sql[index];
+    if (/\s/.test(char)) {
+      index += 1;
+    } else if (sql.startsWith('--', index)) {
+      const end = sql.indexOf('\n', index + 2);
+      index = end === -1 ? sql.length : end + 1;
+    } else if (sql.startsWith('/*', index)) {
+      const end = sql.indexOf('*/', index + 2);
+      if (end === -1) throw new Error('Unterminated migration SQL comment');
+      index = end + 2;
+    } else if (["'", '"', '`', '['].includes(char)) {
+      const closing = char === '[' ? ']' : char;
+      index += 1;
+      let closed = false;
+      while (index < sql.length) {
+        if (sql[index++] !== closing) continue;
+        if (char !== '[' && sql[index] === closing) {
+          index += 1;
+        } else {
+          closed = true;
+          break;
+        }
+      }
+      if (!closed) throw new Error('Unterminated migration SQL quote');
+      // Keep a token boundary without treating quoted text as SQL keywords.
+      yield '<quoted>';
+    } else if (/[a-zA-Z0-9_$\u0080-\uFFFF]/.test(char)) {
+      const start = index++;
+      while (index < sql.length && /[a-zA-Z0-9_$\u0080-\uFFFF]/.test(sql[index])) index += 1;
+      yield sql.slice(start, index).toUpperCase();
+    } else {
+      index += 1;
+      yield char;
+    }
+  }
+}
+
 function assertNoTransactionControl(migration) {
-  const withoutComments = migration.sql
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/--[^\r\n]*/g, ' ');
-  if (/\b(?:BEGIN|COMMIT|END|ROLLBACK|SAVEPOINT|RELEASE)\b/i.test(withoutComments)) {
-    throw new Error(`Migration ${migration.version} must not control transactions`);
+  const forbidden = new Set(['BEGIN', 'COMMIT', 'END', 'ROLLBACK', 'SAVEPOINT', 'RELEASE']);
+  let prefix = [];
+  let statementStart = true;
+  let triggerHeader = false;
+  let triggerBody = false;
+
+  for (const token of migrationSqlTokens(migration.sql)) {
+    if (statementStart && triggerBody && token === 'END') {
+      // Trigger END follows a body statement's semicolon; CASE END does not.
+      triggerBody = false;
+      statementStart = false;
+      continue;
+    }
+    if (statementStart && forbidden.has(token)) {
+      throw new Error(`Migration ${migration.version} must not control transactions`);
+    }
+    if (token === ';') {
+      statementStart = true;
+      triggerHeader = false;
+      prefix = [];
+      continue;
+    }
+    if (triggerHeader && token === 'BEGIN') {
+      triggerHeader = false;
+      triggerBody = true;
+      statementStart = true;
+      continue;
+    }
+    if (!triggerBody && prefix.length < 3) {
+      prefix.push(token);
+      triggerHeader = prefix[0] === 'CREATE' && (
+        prefix[1] === 'TRIGGER'
+        || (['TEMP', 'TEMPORARY'].includes(prefix[1]) && prefix[2] === 'TRIGGER')
+      );
+    }
+    statementStart = false;
   }
 }
 

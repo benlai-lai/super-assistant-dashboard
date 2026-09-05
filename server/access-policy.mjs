@@ -16,6 +16,9 @@ const ACTIONS = {
   CATEGORY_CREATE: 'category:create',
   CATEGORY_RENAME: 'category:rename',
   CATEGORY_DEACTIVATE: 'category:deactivate',
+  QUOTATION_INTERNAL_READ: 'quotation:internal:read',
+  QUOTATION_CUSTOMER_READ: 'quotation:customer:read',
+  APPROVAL_DECIDE: 'quotation:approval:decide',
 };
 
 /**
@@ -32,6 +35,9 @@ const ROLE_PERMISSIONS = {
     [ACTIONS.CATEGORY_CREATE]: true,
     [ACTIONS.CATEGORY_RENAME]: true,
     [ACTIONS.CATEGORY_DEACTIVATE]: true,
+    [ACTIONS.QUOTATION_INTERNAL_READ]: true,
+    [ACTIONS.QUOTATION_CUSTOMER_READ]: true,
+    [ACTIONS.APPROVAL_DECIDE]: false,
   },
   viewer: {
     [ACTIONS.READ]: true,
@@ -43,6 +49,23 @@ const ROLE_PERMISSIONS = {
     [ACTIONS.CATEGORY_CREATE]: false,
     [ACTIONS.CATEGORY_RENAME]: false,
     [ACTIONS.CATEGORY_DEACTIVATE]: false,
+    [ACTIONS.QUOTATION_INTERNAL_READ]: false,
+    [ACTIONS.QUOTATION_CUSTOMER_READ]: true,
+    [ACTIONS.APPROVAL_DECIDE]: false,
+  },
+  approver: {
+    [ACTIONS.READ]: true,
+    [ACTIONS.CREATE]: false,
+    [ACTIONS.UPDATE]: false,
+    [ACTIONS.DELETE]: false,
+    [ACTIONS.PUBLISH]: false,
+    [ACTIONS.CATEGORY_LIST]: true,
+    [ACTIONS.CATEGORY_CREATE]: false,
+    [ACTIONS.CATEGORY_RENAME]: false,
+    [ACTIONS.CATEGORY_DEACTIVATE]: false,
+    [ACTIONS.QUOTATION_INTERNAL_READ]: true,
+    [ACTIONS.QUOTATION_CUSTOMER_READ]: true,
+    [ACTIONS.APPROVAL_DECIDE]: true,
   },
 };
 
@@ -50,7 +73,7 @@ const ROLE_PERMISSIONS = {
  * Check if an actor can perform an action
  * Fail-closed policy: missing policy, throw, invalid result, unknown action all reject
  *
- * @param {string} role - 'editor' or 'viewer'
+ * @param {string} role - 'editor', 'viewer', or 'approver'
  * @param {string} action - Action to check
  * @returns {boolean} True if allowed, false if denied
  * @throws {Error} On invalid policy state
