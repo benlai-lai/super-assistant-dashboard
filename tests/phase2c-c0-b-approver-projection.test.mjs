@@ -151,7 +151,80 @@ test('C0-B migration - version 3 is contiguous, repeat migration is a no-op, and
       'locked_exchange_rate_micros', 'margin_minor', 'margin_rate_basis_points', 'internal_notes',
     ]) assert.equal(columns.includes(column), true);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table' AND name = 'quotation_approvals'").get().count, 1);
-    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'trigger' AND name LIKE 'quotation_approvals_immutable_%'").get().count, 2);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'trigger' AND name LIKE 'quotation_approvals_immutable_%'").get().count, 3);
+  } finally {
+    db.close();
+  }
+});
+
+test('C0-B approval immutability - first inserts work and every replacement path fails with recursive triggers off', () => {
+  const db = openPhase2bDatabase(':memory:');
+  try {
+    db.exec('PRAGMA recursive_triggers = OFF');
+    assert.equal(db.prepare('PRAGMA recursive_triggers').get().recursive_triggers, 0);
+    assert.equal(db.prepare("SELECT wr FROM pragma_table_list WHERE name = 'quotation_approvals'").get().wr, 1);
+    const repos = createRepos(db, { now: () => LATER, createId: () => 'approval-original' });
+    seedFoundation(repos);
+    seedQuotation(repos);
+    const result = repos.approvals.decide({
+      quotationVersionId: 'quotation-one', actorId: 'approver-one', decision: 'APPROVED', reason: 'original 核准',
+    });
+    assert.equal(result.approval.id, 'approval-original');
+    assert.equal(result.approval.decision, 'APPROVED');
+
+    const columns = 'id, quotation_version_id, decision, approver_actor_id, reason, created_at';
+    const placeholders = '?, ?, ?, ?, ?, ?';
+    const second = ['approval-second', 'quotation-one', 'APPROVED', 'approver-two', 'second record', NOW];
+    assert.equal(db.prepare(`INSERT INTO quotation_approvals (${columns}) VALUES (${placeholders})`).run(...second).changes, 1);
+    const readRows = () => db.prepare('SELECT * FROM quotation_approvals ORDER BY id').all();
+    const originalRows = readRows();
+    assert.equal(originalRows.length, 2);
+    const originalBytes = Buffer.from(JSON.stringify(originalRows), 'utf8');
+    const originalQuotation = repos.quotations.getVersion('quotation-one');
+    const originalLedger = db.prepare('SELECT * FROM schema_migrations ORDER BY version').all();
+    const replacement = ['approval-original', 'quotation-one', 'RETURNED', 'approver-forged', 'rewritten', NOW];
+    const attemptedNewRow = ['approval-partial', 'quotation-one', 'RETURNED', 'approver-forged', 'must roll back', NOW];
+    const attempts = [
+      ['UPDATE', 'UPDATE quotation_approvals SET decision = ?, approver_actor_id = ?, reason = ?, created_at = ? WHERE id = ?',
+        ['RETURNED', 'approver-forged', 'rewritten', NOW, 'approval-original']],
+      ['DELETE', 'DELETE FROM quotation_approvals WHERE id = ?', ['approval-original']],
+      ['REPLACE', `REPLACE INTO quotation_approvals (${columns}) VALUES (${placeholders})`, replacement],
+      ['INSERT OR REPLACE', `INSERT OR REPLACE INTO quotation_approvals (${columns}) VALUES (${placeholders})`, replacement],
+      ['INSERT OR REPLACE SELECT', `INSERT OR REPLACE INTO quotation_approvals (${columns}) SELECT ${placeholders}`, replacement],
+      ['UPSERT', `INSERT INTO quotation_approvals (${columns}) VALUES (${placeholders})
+        ON CONFLICT(id) DO UPDATE SET decision = excluded.decision, approver_actor_id = excluded.approver_actor_id,
+          reason = excluded.reason, created_at = excluded.created_at`, replacement],
+      ['UPDATE OR REPLACE', 'UPDATE OR REPLACE quotation_approvals SET id = ? WHERE id = ?',
+        ['approval-original', 'approval-second']],
+      ['multi-row REPLACE', `REPLACE INTO quotation_approvals (${columns}) VALUES (${placeholders}), (${placeholders})`,
+        [...attemptedNewRow, ...replacement]],
+      ['multi-row INSERT OR REPLACE', `INSERT OR REPLACE INTO quotation_approvals (${columns}) VALUES (${placeholders}), (${placeholders})`,
+        [...attemptedNewRow, ...replacement]],
+    ];
+    function assertPreserved(label) {
+      assert.deepEqual(readRows(), originalRows, label);
+      assert.deepEqual(Buffer.from(JSON.stringify(readRows()), 'utf8'), originalBytes, label);
+      assert.deepEqual(repos.quotations.getVersion('quotation-one'), originalQuotation, label);
+      assert.deepEqual(db.prepare('SELECT * FROM schema_migrations ORDER BY version').all(), originalLedger, label);
+      assert.equal(db.prepare('PRAGMA recursive_triggers').get().recursive_triggers, 0, label);
+      assert.equal(db.isTransaction, false, label);
+    }
+    for (const [label, sql, values] of attempts) {
+      assert.throws(() => db.prepare(sql).run(...values), /immutable/i, label);
+      assertPreserved(label);
+    }
+    for (const alias of ['rowid', '_rowid_', 'oid']) {
+      for (const command of ['REPLACE', 'INSERT OR REPLACE']) {
+        const label = `${command} via ${alias}`;
+        assert.throws(() => db.prepare(`
+          ${command} INTO quotation_approvals (${alias}, ${columns}) VALUES (?, ${placeholders})
+        `).run(1, ...attemptedNewRow), /no column named/i, label);
+        assertPreserved(label);
+      }
+    }
+    assert.equal(migrateDatabase(db, { now: () => { throw new Error('rerun must not write'); } }), '3');
+    assertPreserved('rerun');
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
   } finally {
     db.close();
   }

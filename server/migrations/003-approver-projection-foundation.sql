@@ -42,10 +42,18 @@ CREATE TABLE quotation_approvals (
   created_at TEXT NOT NULL,
   FOREIGN KEY (quotation_version_id) REFERENCES quotation_versions(id)
     ON UPDATE RESTRICT ON DELETE RESTRICT
-);
+) WITHOUT ROWID;
 
 CREATE INDEX quotation_approvals_version_created_idx
   ON quotation_approvals(quotation_version_id, created_at, id);
+
+-- Reject replacements before their implicit delete, even with recursive_triggers=0.
+CREATE TRIGGER quotation_approvals_immutable_insert
+BEFORE INSERT ON quotation_approvals
+WHEN EXISTS (SELECT 1 FROM quotation_approvals WHERE id = NEW.id)
+BEGIN
+  SELECT RAISE(ABORT, 'quotation approval records are immutable');
+END;
 
 CREATE TRIGGER quotation_approvals_immutable_update
 BEFORE UPDATE ON quotation_approvals
