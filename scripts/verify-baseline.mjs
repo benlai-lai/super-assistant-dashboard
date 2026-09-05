@@ -302,13 +302,68 @@ function stripCssComments(source, sourceLabel) {
 function extractCssReferences(source, sourceLabel) {
   const withoutComments = stripCssComments(source, sourceLabel);
   const references = [];
-  const urlPattern = /\burl\s*\(\s*(?:"((?:\\.|[^"])*)"|'((?:\\.|[^'])*)'|([^)]*?))\s*\)/gi;
-  const importPattern = /@import\s+(?:"((?:\\.|[^"])*)"|'((?:\\.|[^'])*)')/gi;
-  for (const match of withoutComments.matchAll(urlPattern)) {
-    references.push((match[1] ?? match[2] ?? match[3]).trim());
+  const length = withoutComments.length;
+
+  // Cache each suffix's closing quote instead of retrying ambiguous backslash
+  // paths. Prefer an escaped pair when it can finish; otherwise preserve the
+  // legacy literal-backslash fallback. Each table takes one right-to-left pass.
+  function closingQuotes(quote, requireParenthesis) {
+    const ends = new Int32Array(length + 2).fill(-1);
+    let nextNonSpace = length;
+    for (let index = length - 1; index >= 0; index -= 1) {
+      const character = withoutComments[index];
+      if (character === quote) {
+        if (!requireParenthesis || withoutComments[nextNonSpace] === ')') ends[index] = index;
+      } else {
+        const escapedPair = character === '\\' && index + 1 < length
+          && !['\n', '\r', '\u2028', '\u2029'].includes(withoutComments[index + 1]);
+        ends[index] = escapedPair && ends[index + 2] !== -1 ? ends[index + 2] : ends[index + 1];
+      }
+      if (!/\s/.test(character)) nextNonSpace = index;
+    }
+    return ends;
   }
-  for (const match of withoutComments.matchAll(importPattern)) {
-    references.push((match[1] ?? match[2]).trim());
+
+  const nextParenthesis = new Int32Array(length + 1);
+  nextParenthesis[length] = -1;
+  for (let index = length - 1; index >= 0; index -= 1) {
+    nextParenthesis[index] = withoutComments[index] === ')' ? index : nextParenthesis[index + 1];
+  }
+  const urlQuotes = new Map([
+    ['"', closingQuotes('"', true)], ["'", closingQuotes("'", true)]
+  ]);
+  const urlStart = /\burl\s*\(\s*/gi;
+  for (let match = urlStart.exec(withoutComments); match; match = urlStart.exec(withoutComments)) {
+    const start = urlStart.lastIndex;
+    const quotedEnd = urlQuotes.get(withoutComments[start])?.[start + 1] ?? -1;
+    if (quotedEnd !== -1) {
+      references.push(withoutComments.slice(start + 1, quotedEnd).trim());
+      let close = quotedEnd + 1;
+      while (/\s/.test(withoutComments[close] || '')) close += 1;
+      urlStart.lastIndex = close + 1;
+    } else {
+      // The old unquoted branch stops at the first ')' even for a failed
+      // quoted candidate. A lookup also bounds repeated malformed prefixes.
+      const close = nextParenthesis[start];
+      if (close === -1) break;
+      references.push(withoutComments.slice(start, close).trim());
+      urlStart.lastIndex = close + 1;
+    }
+  }
+
+  // Keep URL-first ordering, raw escapes, duplicates and empty captures.
+  // Prefix scans never revisit consumed input; suffix lookups are O(1).
+  // Total time and auxiliary space are O(n), plus the returned strings.
+  const importQuotes = new Map([
+    ['"', closingQuotes('"', false)], ["'", closingQuotes("'", false)]
+  ]);
+  const importStart = /@import\s+(["'])/gi;
+  for (let match = importStart.exec(withoutComments); match; match = importStart.exec(withoutComments)) {
+    const start = importStart.lastIndex;
+    const close = importQuotes.get(match[1])[start];
+    if (close === -1) continue;
+    references.push(withoutComments.slice(start, close).trim());
+    importStart.lastIndex = close + 1;
   }
   return references;
 }
