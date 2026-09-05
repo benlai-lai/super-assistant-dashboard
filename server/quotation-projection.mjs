@@ -24,6 +24,41 @@ function itemSubtotalMinor(item) {
   return subtotal;
 }
 
+function invalidCustomerProjection() {
+  throw new QuotationProjectionNotFoundError('Quotation projection is not available');
+}
+
+function customerField(record, key) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)
+    || ![null, Object.prototype].includes(Object.getPrototypeOf(record))) invalidCustomerProjection();
+  const descriptor = Object.getOwnPropertyDescriptor(record, key);
+  if (!descriptor || !Object.hasOwn(descriptor, 'value')) invalidCustomerProjection();
+  return descriptor.value;
+}
+
+function customerText(value, nullable = false) {
+  if (nullable && value === null) return null;
+  if (typeof value !== 'string') invalidCustomerProjection();
+  return value;
+}
+
+function customerInteger(value, minimum = 0) {
+  if (!Number.isSafeInteger(value) || value < minimum) invalidCustomerProjection();
+  return value;
+}
+
+function customerCurrency(value, expected = value) {
+  if (typeof value !== 'string' || !/^[A-Z]{3}$/.test(value) || value !== expected) invalidCustomerProjection();
+  return value;
+}
+
+function customerValidUntil(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) invalidCustomerProjection();
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString() !== value) invalidCustomerProjection();
+  return value;
+}
+
 export function createQuotationProjection({ quotations, costs, approvals }) {
   function getSource(versionId) {
     return quotations.getProjectionSource(versionId);
@@ -121,41 +156,63 @@ export function createQuotationProjection({ quotations, costs, approvals }) {
     customer(versionId, actor) {
       requireActor(actor);
       const source = getSource(versionId);
+      const version = customerField(source, 'version');
+      const status = customerText(customerField(version, 'status'));
+      if (!['draft', 'published', 'void'].includes(status)) invalidCustomerProjection();
+      const ownerActorId = customerText(customerField(version, 'owner_actor_id'), true);
       const visible = actor.role === 'approver'
-        || (actor.role === 'editor' && source?.version.owner_actor_id === actor.actorId)
-        || (actor.role === 'viewer' && source?.version.status === 'published');
+        || (actor.role === 'editor' && ownerActorId === actor.actorId)
+        || (actor.role === 'viewer' && status === 'published');
       requireVisibleSource(source, visible);
 
-      const version = source.version;
-      const items = source.items.map((item) => ({
-        description: item.description,
-        quantity: item.quantity,
-        unitPriceMinor: item.customer_unit_price_minor,
-        subtotalMinor: itemSubtotalMinor(item),
-      }));
-      const subtotalMinor = items.reduce((total, item) => total + item.subtotalMinor, 0);
-      if (!Number.isSafeInteger(subtotalMinor)) throw new Error('Quotation subtotal is invalid');
+      const currency = customerCurrency(customerField(version, 'currency'));
+      const validUntil = customerValidUntil(customerField(version, 'valid_until'));
+      const sourceItems = customerField(source, 'items');
+      const sourceOptions = customerField(source, 'options');
+      if (!Array.isArray(sourceItems) || !Array.isArray(sourceOptions)) invalidCustomerProjection();
+      const items = [];
+      const options = [];
+      let subtotalMinor = 0;
+      // Build fresh arrays without invoking repository-owned map/iterator/species hooks.
+      for (let index = 0; index < sourceItems.length; index += 1) {
+        const item = sourceItems[index];
+        customerCurrency(customerField(item, 'currency'), currency);
+        const quantity = customerInteger(customerField(item, 'quantity'), 1);
+        const unitPriceMinor = customerInteger(customerField(item, 'customer_unit_price_minor'));
+        const itemTotal = customerInteger(quantity * unitPriceMinor);
+        subtotalMinor = customerInteger(subtotalMinor + itemTotal);
+        items.push({
+          description: customerText(customerField(item, 'description')),
+          quantity,
+          unitPriceMinor,
+          subtotalMinor: itemTotal,
+        });
+      }
+      for (let index = 0; index < sourceOptions.length; index += 1) {
+        const option = sourceOptions[index];
+        options.push({
+          label: customerText(customerField(option, 'label')),
+          priceMinor: customerInteger(customerField(option, 'customer_price_minor')),
+          currency: customerCurrency(customerField(option, 'currency'), currency),
+        });
+      }
 
       return {
         quotation: {
-          versionNumber: version.version_number,
-          status: version.status,
-          currency: version.currency,
-          validUntil: version.valid_until,
-          shippingDisplay: version.shipping_display,
+          versionNumber: customerInteger(customerField(version, 'version_number'), 1),
+          status,
+          currency,
+          validUntil,
+          shippingDisplay: customerText(customerField(version, 'shipping_display'), true),
           subtotalMinor,
-          totalMinor: version.customer_total_minor,
+          totalMinor: customerInteger(customerField(version, 'customer_total_minor')),
         },
         customer: {
-          displayName: version.customer_display_name,
-          contactName: version.customer_contact_name,
+          displayName: customerText(customerField(version, 'customer_display_name')),
+          contactName: customerText(customerField(version, 'customer_contact_name'), true),
         },
         items,
-        options: source.options.map((option) => ({
-          label: option.label,
-          priceMinor: option.customer_price_minor,
-          currency: option.currency,
-        })),
+        options,
       };
     },
   };

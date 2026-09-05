@@ -96,7 +96,19 @@ export function createQuotationApi({ projections, approvals, getSession, parseJs
         const session = await authorize(req, 'quotation:approval:decide');
         requireNoQuery(url);
         requireVersionId(decisionMatch[1]);
-        const input = requireObject(await parseJsonBody(req));
+        let parsedBody;
+        try {
+          parsedBody = await parseJsonBody(req);
+        } catch (error) {
+          // Only parser-origin errors may select these public HTTP responses.
+          if (error?.status === 400) {
+            throw new ApiError(400, error.message === 'Malformed JSON' ? 'Malformed JSON' : 'Bad Request');
+          }
+          if (error?.status === 413) throw new ApiError(413, 'Payload Too Large');
+          if (error?.status === 415) throw new ApiError(415, 'Unsupported Media Type');
+          throw error;
+        }
+        const input = requireObject(parsedBody);
         requireExactFields(input, ['decision'], ['reason']);
         requireDecision(input.decision);
         requireReason(input.reason);
@@ -126,7 +138,6 @@ export function createQuotationApi({ projections, approvals, getSession, parseJs
       return false;
     } catch (error) {
       if (error instanceof ApiError) return send(res, error.status, { error: error.message });
-      if (error?.status) return send(res, error.status, { error: error.message || 'Invalid request' });
       if (error instanceof ApprovalDeniedError || error instanceof QuotationProjectionDeniedError) {
         return send(res, 403, { error: 'Forbidden' });
       }

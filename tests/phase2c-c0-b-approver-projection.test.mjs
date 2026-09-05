@@ -4,7 +4,9 @@ import { promisify } from 'node:util';
 import test from 'node:test';
 import { checkPermission, getPolicyMatrix, validateRoleFromSession } from '../server/access-policy.mjs';
 import {
+  ApprovalConflictError,
   ApprovalDeniedError,
+  ApprovalNotFoundError,
   createApprovalRepository,
 } from '../server/approval-repository.mjs';
 import { createCostRepository } from '../server/cost-repository.mjs';
@@ -370,6 +372,216 @@ test('C0-B projections - internal access is ownership-scoped and customer output
     assert.equal(JSON.stringify(published).includes('APPROVAL-REASON-CANARY'), false);
   } finally {
     db.close();
+  }
+});
+
+async function captureQuotationResponse(api, method, url) {
+  const res = {
+    writeHead(status) { this.status = status; },
+    end(body) { this.body = JSON.parse(body); },
+  };
+  await api.handle({ method, url }, res);
+  return { status: res.status, body: res.body };
+}
+
+test('C0-B customer boundary - missing expiry and mixed item or option currency fail closed without writes or conversion', async () => {
+  const db = openPhase2bDatabase(':memory:');
+  try {
+    let approvalId = 0;
+    const repos = createRepos(db, { now: () => LATER, createId: () => `boundary-approval-${++approvalId}` });
+    seedFoundation(repos);
+    const cases = [
+      ['no-expiry', null, 'TWD', 'TWD', 404],
+      ['omitted-expiry', undefined, 'TWD', 'TWD', 404],
+      ['invalid-calendar', '2026-02-30T00:00:00.000Z', 'TWD', 'TWD', 404],
+      ['mixed-item', VALID_UNTIL, 'USD', 'TWD', 404],
+      ['mixed-option', VALID_UNTIL, 'TWD', 'USD', 404],
+      ['valid', VALID_UNTIL, 'TWD', 'TWD', 200],
+    ];
+    for (const [index, [id, validUntil, itemCurrency, optionCurrency]] of cases.entries()) {
+      repos.quotations.createVersion({
+        id, inquiryId: 'inquiry-one', versionNumber: index + 1, ownerActorId: 'editor-one',
+        currency: 'TWD', customerTotalMinor: 100, validUntil, lockedExchangeRateMicros: 31000000,
+        internalNotes: 'BOUNDARY-INTERNAL-CANARY', createdAt: NOW,
+      });
+      repos.quotations.addItem({
+        id: `${id}-item`, quotationVersionId: id, inquiryItemId: 'inquiry-item-one',
+        description: 'Public item', quantity: 1, customerUnitPriceMinor: 100, currency: itemCurrency, createdAt: NOW,
+      });
+      repos.quotations.addOption({
+        id: `${id}-option`, quotationVersionId: id, label: 'Public option', customerPriceMinor: 100,
+        currency: optionCurrency, createdAt: NOW,
+      });
+      repos.approvals.decide({ quotationVersionId: id, actorId: 'approver-one', decision: 'APPROVED', reason: 'BOUNDARY-APPROVAL-CANARY' });
+    }
+    const snapshot = () => JSON.stringify([
+      repos.quotations.listVersions('inquiry-one'),
+      ...cases.map(([id]) => [repos.quotations.listItems(id), repos.quotations.listOptions(id), repos.approvals.listForQuotation(id)]),
+      db.prepare('SELECT * FROM schema_migrations ORDER BY version').all(),
+    ]);
+    const before = snapshot();
+    let sensitiveCalls = 0;
+    const denied = new Proxy({}, { get() { sensitiveCalls += 1; throw new Error('sensitive repository called'); } });
+    const projections = createQuotationProjection({ quotations: repos.quotations, costs: denied, approvals: denied });
+    for (const actor of [
+      { actorId: 'editor-one', role: 'editor' }, { actorId: 'approver-one', role: 'approver' }, { actorId: 'viewer-one', role: 'viewer' },
+    ]) {
+      const api = createQuotationApi({ projections, approvals: denied, getSession: () => actor, parseJsonBody: () => { throw new Error('GET parsed body'); } });
+      for (const [id, validUntil, , , expectedStatus] of cases) {
+        const response = await captureQuotationResponse(api, 'GET', `/api/quotations/${id}/customer`);
+        assert.equal(response.status, expectedStatus, `${actor.role} ${id}`);
+        if (expectedStatus === 404) assert.deepEqual(response.body, { error: 'Not found' });
+        else {
+          assert.equal(response.body.quotation.quotation.validUntil, validUntil);
+          assert.equal(response.body.quotation.quotation.subtotalMinor, 100);
+          assert.equal(response.body.quotation.quotation.totalMinor, 100);
+        }
+        assert.equal(JSON.stringify(response).includes('CANARY'), false);
+        assert.equal(snapshot(), before);
+      }
+    }
+    assert.equal(sensitiveCalls, 0);
+    assert.equal(repos.projections.internal('mixed-item', { actorId: 'approver-one', role: 'approver' }).items[0].currency, 'USD');
+    assert.equal(repos.projections.internal('no-expiry', { actorId: 'approver-one', role: 'approver' }).quotationVersion.validUntil, null);
+  } finally { db.close(); }
+});
+
+test('C0-B customer boundary - scalar validation and fresh nested mappers reject payload and serialization hooks', async () => {
+  const db = openPhase2bDatabase(':memory:');
+  try {
+    const repos = createRepos(db);
+    seedFoundation(repos);
+    seedQuotation(repos, { withDetails: true });
+    const baseline = repos.quotations.getProjectionSource('quotation-one');
+    let source = structuredClone(baseline);
+    let sensitiveCalls = 0;
+    const denied = new Proxy({}, { get() { sensitiveCalls += 1; throw new Error('sensitive repository called'); } });
+    const projections = createQuotationProjection({ quotations: { getProjectionSource: () => source }, costs: denied, approvals: denied });
+    const actor = { actorId: 'editor-one', role: 'editor' };
+    const api = createQuotationApi({ projections, approvals: denied, getSession: () => actor, parseJsonBody: () => { throw new Error('GET parsed body'); } });
+    const expectDenied = async () => assert.deepEqual(
+      await captureQuotationResponse(api, 'GET', '/api/quotations/quotation-one/customer'),
+      { status: 404, body: { error: 'Not found' } },
+    );
+    const marker = 'NESTED-SECRET-CANARY';
+    const canary = {
+      costSummary: { marker }, costLines: [{ marker }], allocations: [{ marker }], supplier: marker, supplier_label: marker,
+      exchangeRate: marker, margin: marker, marginRate: marker, internalNotes: marker,
+      approvalReason: marker, approvalRecords: [{ marker }], auditPayload: { nested: [{ marker }] },
+    };
+    const paths = [
+      ...['version_number', 'status', 'currency', 'valid_until', 'shipping_display', 'customer_total_minor', 'customer_display_name', 'customer_contact_name'].map((key) => ['version', key]),
+      ...['description', 'quantity', 'customer_unit_price_minor', 'currency'].map((key) => ['items', 0, key]),
+      ...['label', 'customer_price_minor', 'currency'].map((key) => ['options', 0, key]),
+    ];
+    function setField(path, value) {
+      let record = source;
+      for (const key of path.slice(0, -1)) record = record[key];
+      record[path.at(-1)] = value;
+    }
+    for (const path of paths) {
+      for (const value of [canary, [canary]]) {
+        source = structuredClone(baseline);
+        setField(path, value);
+        await expectDenied();
+      }
+    }
+    for (const value of [null, undefined, '', ' ', 'invalid', '2026-02-29T00:00:00.000Z', '2026-01-01T25:00:00.000Z', new Date(VALID_UNTIL)]) {
+      source = structuredClone(baseline);
+      source.version.valid_until = value;
+      await expectDenied();
+    }
+    for (const value of [new String(marker), Buffer.from(marker), 1n, Symbol(marker), () => marker]) {
+      source = structuredClone(baseline);
+      source.items[0].description = value;
+      await expectDenied();
+    }
+    for (const path of [['version', 'version_number'], ['version', 'customer_total_minor'], ['items', 0, 'quantity'], ['items', 0, 'customer_unit_price_minor'], ['options', 0, 'customer_price_minor']]) {
+      for (const value of [NaN, Infinity, -1, Number.MAX_SAFE_INTEGER + 1, '100', null]) {
+        source = structuredClone(baseline);
+        setField(path, value);
+        await expectDenied();
+      }
+    }
+    source = structuredClone(baseline);
+    source.items[0].quantity = Number.MAX_SAFE_INTEGER;
+    await expectDenied();
+    source = structuredClone(baseline);
+    source.items = [0, 1].map(() => ({ ...baseline.items[0], quantity: 1, customer_unit_price_minor: Number.MAX_SAFE_INTEGER }));
+    await expectDenied();
+    for (const change of [
+      () => { delete source.version.valid_until; },
+      () => { source.items = { map: () => [canary] }; },
+      () => { source.options = null; },
+      () => { source.items = [null]; },
+      () => { source.options[0].currency = 'USD'; },
+      () => { source.version.currency = 'twd'; },
+      () => { source.items[0].quantity = 0; },
+      () => { source.version.version_number = 0; },
+    ]) { source = structuredClone(baseline); change(); await expectDenied(); }
+
+    source = structuredClone(baseline);
+    let hookCalls = 0;
+    const forbiddenHook = () => { hookCalls += 1; return canary; };
+    for (const record of [source, source.version, source.items[0], source.options[0]]) {
+      Object.assign(record, { unfilteredPayload: canary, toJSON: forbiddenHook });
+    }
+    for (const list of [source.items, source.options]) {
+      list.map = forbiddenHook;
+      list[Symbol.iterator] = forbiddenHook;
+      list.toJSON = forbiddenHook;
+      list.constructor = { [Symbol.species]: forbiddenHook };
+    }
+    source.version.shipping_display = null;
+    source.version.customer_contact_name = null;
+    source.version.customer_total_minor = 0;
+    source.items[0].customer_unit_price_minor = 0;
+    source.options[0].customer_price_minor = 0;
+    const safe = projections.customer('quotation-one', actor);
+    assert.notStrictEqual(safe.items, source.items);
+    assert.notStrictEqual(safe.options, source.options);
+    assert.equal(safe.quotation.subtotalMinor, 0);
+    assert.equal(safe.quotation.shippingDisplay, null);
+    assert.equal(safe.customer.contactName, null);
+    assert.equal(JSON.stringify(safe).includes(marker), false);
+    assert.equal(hookCalls, 0);
+    Object.defineProperty(source.items[0], 'description', { get: forbiddenHook });
+    await expectDenied();
+    assert.equal(hookCalls, 0);
+    assert.equal(sensitiveCalls, 0);
+  } finally { db.close(); }
+});
+
+test('C0-B quotation API - only parser-origin status is public and repository errors are sanitized', async () => {
+  const marker = 'REPOSITORY-SECRET-CANARY';
+  const actor = { actorId: 'approver-one', role: 'approver' };
+  for (const status of [400, 401, 403, 404, 413, 415, 422, 500, '400', undefined]) {
+    for (const [method, suffix] of [['GET', 'internal'], ['GET', 'customer'], ['POST', 'approval-decisions']]) {
+      const fail = () => { throw Object.assign(new Error(marker), { status, nested: { marker } }); };
+      const api = createQuotationApi({ projections: { internal: fail, customer: fail }, approvals: { decide: fail }, getSession: () => actor, parseJsonBody: async () => ({ decision: 'APPROVED' }) });
+      assert.deepEqual(await captureQuotationResponse(api, method, `/api/quotations/quotation-one/${suffix}`),
+        { status: 500, body: { error: 'Internal Server Error' } });
+    }
+  }
+  for (const [status, message, expectedStatus, expectedMessage] of [
+    [400, 'Malformed JSON', 400, 'Malformed JSON'], [400, marker, 400, 'Bad Request'],
+    [413, marker, 413, 'Payload Too Large'], [415, marker, 415, 'Unsupported Media Type'],
+    [422, marker, 500, 'Internal Server Error'], ['400', marker, 500, 'Internal Server Error'],
+  ]) {
+    let calls = 0;
+    const api = createQuotationApi({ projections: {}, approvals: { decide() { calls += 1; } }, getSession: () => actor,
+      parseJsonBody: async () => { throw { status, message, nested: { marker } }; } });
+    assert.deepEqual(await captureQuotationResponse(api, 'POST', '/api/quotations/quotation-one/approval-decisions'),
+      { status: expectedStatus, body: { error: expectedMessage } });
+    assert.equal(calls, 0);
+  }
+  for (const [ErrorType, status, message] of [
+    [ApprovalDeniedError, 403, 'Forbidden'], [ApprovalNotFoundError, 404, 'Not found'], [ApprovalConflictError, 409, 'Conflict'],
+    [QuotationProjectionDeniedError, 403, 'Forbidden'], [QuotationProjectionNotFoundError, 404, 'Not found'],
+  ]) {
+    const fail = () => { throw Object.assign(new ErrorType(marker), { status: 422 }); };
+    const api = createQuotationApi({ projections: { customer: fail }, approvals: { decide: fail }, getSession: () => actor, parseJsonBody: async () => ({ decision: 'APPROVED' }) });
+    assert.deepEqual(await captureQuotationResponse(api, 'POST', '/api/quotations/quotation-one/approval-decisions'), { status, body: { error: message } });
   }
 });
 
