@@ -146,6 +146,10 @@ test('AccessPolicy - checkPermission for editor', () => {
   assert.equal(checkPermission('editor', 'update'), true);
   assert.equal(checkPermission('editor', 'delete'), true);
   assert.equal(checkPermission('editor', 'publish'), true);
+  assert.equal(checkPermission('editor', 'category:list'), true);
+  assert.equal(checkPermission('editor', 'category:create'), true);
+  assert.equal(checkPermission('editor', 'category:rename'), true);
+  assert.equal(checkPermission('editor', 'category:deactivate'), true);
 });
 
 test('AccessPolicy - checkPermission for viewer', () => {
@@ -154,6 +158,10 @@ test('AccessPolicy - checkPermission for viewer', () => {
   assert.equal(checkPermission('viewer', 'update'), false);
   assert.equal(checkPermission('viewer', 'delete'), false);
   assert.equal(checkPermission('viewer', 'publish'), false);
+  assert.equal(checkPermission('viewer', 'category:list'), false);
+  assert.equal(checkPermission('viewer', 'category:create'), false);
+  assert.equal(checkPermission('viewer', 'category:rename'), false);
+  assert.equal(checkPermission('viewer', 'category:deactivate'), false);
 });
 
 test('AccessPolicy - checkPermission throws on unknown role', () => {
@@ -191,6 +199,11 @@ test('AccessPolicy - permission matrix shows viewer cannot write', () => {
   assert.equal(matrix.viewer.update, false);
   assert.equal(matrix.viewer.delete, false);
   assert.equal(matrix.viewer.publish, false);
+  assert.equal(matrix.viewer.read, true);
+  assert.equal(matrix.viewer['category:list'], false);
+  assert.equal(matrix.viewer['category:create'], false);
+  assert.equal(matrix.viewer['category:rename'], false);
+  assert.equal(matrix.viewer['category:deactivate'], false);
 });
 
 test('AccessPolicy - policy matrix is immutable', () => {

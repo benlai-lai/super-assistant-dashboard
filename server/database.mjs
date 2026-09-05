@@ -1,21 +1,25 @@
-import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { migrateDatabase } from './migrations/index.mjs';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const schemaSql = readFileSync(join(__dirname, 'schema.sql'), 'utf8');
-
-export function openPhase2bDatabase(filename = ':memory:') {
-  const db = new DatabaseSync(filename);
-  db.exec('PRAGMA foreign_keys = ON');
-  db.exec(schemaSql);
-  const foreignKeys = db.prepare('PRAGMA foreign_keys').get();
-  if (foreignKeys.foreign_keys !== 1) {
-    db.close();
-    throw new Error('SQLite foreign_keys could not be enabled');
+export function openPhase2bDatabase(filename = ':memory:', migrationOptions = {}) {
+  let db;
+  try {
+    db = new DatabaseSync(filename);
+    db.exec('PRAGMA foreign_keys = ON');
+    const foreignKeys = db.prepare('PRAGMA foreign_keys').get();
+    if (foreignKeys.foreign_keys !== 1) {
+      throw new Error('SQLite foreign_keys could not be enabled');
+    }
+    migrateDatabase(db, migrationOptions);
+    return db;
+  } catch (error) {
+    try {
+      db?.close();
+    } catch {
+      // Preserve the migration/open failure.
+    }
+    throw error;
   }
-  return db;
 }
 
 export function getSchemaVersion(db) {
