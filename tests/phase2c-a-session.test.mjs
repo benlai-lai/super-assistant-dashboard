@@ -150,6 +150,9 @@ test('AccessPolicy - checkPermission for editor', () => {
   assert.equal(checkPermission('editor', 'category:create'), true);
   assert.equal(checkPermission('editor', 'category:rename'), true);
   assert.equal(checkPermission('editor', 'category:deactivate'), true);
+  assert.equal(checkPermission('editor', 'quotation:internal:read'), true);
+  assert.equal(checkPermission('editor', 'quotation:customer:read'), true);
+  assert.equal(checkPermission('editor', 'quotation:approval:decide'), false);
 });
 
 test('AccessPolicy - checkPermission for viewer', () => {
@@ -162,6 +165,24 @@ test('AccessPolicy - checkPermission for viewer', () => {
   assert.equal(checkPermission('viewer', 'category:create'), false);
   assert.equal(checkPermission('viewer', 'category:rename'), false);
   assert.equal(checkPermission('viewer', 'category:deactivate'), false);
+  assert.equal(checkPermission('viewer', 'quotation:internal:read'), false);
+  assert.equal(checkPermission('viewer', 'quotation:customer:read'), true);
+  assert.equal(checkPermission('viewer', 'quotation:approval:decide'), false);
+});
+
+test('AccessPolicy - checkPermission for approver', () => {
+  assert.equal(checkPermission('approver', 'read'), true);
+  assert.equal(checkPermission('approver', 'create'), false);
+  assert.equal(checkPermission('approver', 'update'), false);
+  assert.equal(checkPermission('approver', 'delete'), false);
+  assert.equal(checkPermission('approver', 'publish'), false);
+  assert.equal(checkPermission('approver', 'category:list'), true);
+  assert.equal(checkPermission('approver', 'category:create'), false);
+  assert.equal(checkPermission('approver', 'category:rename'), false);
+  assert.equal(checkPermission('approver', 'category:deactivate'), false);
+  assert.equal(checkPermission('approver', 'quotation:internal:read'), true);
+  assert.equal(checkPermission('approver', 'quotation:customer:read'), true);
+  assert.equal(checkPermission('approver', 'quotation:approval:decide'), true);
 });
 
 test('AccessPolicy - checkPermission throws on unknown role', () => {
@@ -175,6 +196,7 @@ test('AccessPolicy - checkPermission throws on unknown action', () => {
 test('AccessPolicy - validateRoleFromSession accepts valid roles', () => {
   assert.doesNotThrow(() => validateRoleFromSession('editor'));
   assert.doesNotThrow(() => validateRoleFromSession('viewer'));
+  assert.doesNotThrow(() => validateRoleFromSession('approver'));
 });
 
 test('AccessPolicy - validateRoleFromSession rejects invalid roles', () => {
@@ -185,11 +207,13 @@ test('AccessPolicy - validateRoleFromSession rejects invalid roles', () => {
 test('AccessPolicy - getPolicyMatrix returns correct structure', () => {
   const matrix = getPolicyMatrix();
 
-  assert.deepEqual(Object.keys(matrix).sort(), ['editor', 'viewer']);
+  assert.deepEqual(Object.keys(matrix).sort(), ['approver', 'editor', 'viewer']);
   assert.equal(matrix.editor.read, true);
   assert.equal(matrix.editor.create, true);
   assert.equal(matrix.viewer.read, true);
   assert.equal(matrix.viewer.create, false);
+  assert.equal(matrix.approver.read, true);
+  assert.equal(matrix.approver.create, false);
 });
 
 test('AccessPolicy - permission matrix shows viewer cannot write', () => {
@@ -204,6 +228,9 @@ test('AccessPolicy - permission matrix shows viewer cannot write', () => {
   assert.equal(matrix.viewer['category:create'], false);
   assert.equal(matrix.viewer['category:rename'], false);
   assert.equal(matrix.viewer['category:deactivate'], false);
+  assert.equal(matrix.viewer['quotation:internal:read'], false);
+  assert.equal(matrix.viewer['quotation:customer:read'], true);
+  assert.equal(matrix.viewer['quotation:approval:decide'], false);
 });
 
 test('AccessPolicy - policy matrix is immutable', () => {

@@ -20,6 +20,7 @@ const EXPECTED_TABLES = [
   'audit_logs',
   'backup_runs',
   'product_categories',
+  'quotation_approvals',
   'schema_migrations',
 ];
 
@@ -36,7 +37,7 @@ function withTempDatabase(callback) {
   }
 }
 
-test('empty database initialization migrates the Phase 2B schema to C0-A version 2', () => {
+test('empty database initialization migrates the Phase 2B schema through C0-B version 3', () => {
   withTempDatabase((db) => {
     const tables = db.prepare(`
       SELECT name FROM sqlite_master
@@ -45,12 +46,13 @@ test('empty database initialization migrates the Phase 2B schema to C0-A version
     `).all().map((row) => row.name);
 
     assert.deepEqual(tables, [...EXPECTED_TABLES].sort());
-    assert.equal(getSchemaVersion(db), '2');
+    assert.equal(getSchemaVersion(db), '3');
     assert.deepEqual(
       db.prepare('SELECT version, name FROM schema_migrations ORDER BY version').all().map((row) => ({ ...row })),
       [
         { version: 1, name: 'phase2b-initial-schema' },
         { version: 2, name: 'product-category-foundation' },
+        { version: 3, name: 'approver-projection-foundation' },
       ],
     );
 

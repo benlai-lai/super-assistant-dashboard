@@ -84,6 +84,16 @@ export function createCostRepository(db) {
       assertId(inquiryId, 'inquiry id');
       return db.prepare('SELECT * FROM cost_estimates WHERE inquiry_id = ? ORDER BY created_at, id').all(inquiryId);
     },
+    listAllocationsForQuotation(quotationVersionId) {
+      assertId(quotationVersionId, 'quotation version id');
+      return db.prepare(`
+        SELECT ca.*
+        FROM cost_allocations ca
+        JOIN quotation_items qi ON qi.id = ca.quotation_item_id
+        WHERE qi.quotation_version_id = ?
+        ORDER BY ca.created_at, ca.id
+      `).all(quotationVersionId);
+    },
     summarizeByInquiry(inquiryId) {
       assertId(inquiryId, 'inquiry id');
       return db.prepare(`
