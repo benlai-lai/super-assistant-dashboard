@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { request as httpRequest } from 'node:http';
 import { createConnection } from 'node:net';
@@ -346,27 +347,39 @@ test('close drains the listener, revokes sessions, closes SQLite, and is idempot
   await assert.rejects(request(pilot, '/pilot/'));
 });
 
-for (const mode of ['normal', 'startup-error', 'shutdown-error']) {
-  test(`CLI keeps credentials out of stdout and stderr (${mode})`, { timeout: 15_000 }, async (t) => {
-    const secret = 'synthetic-sensitive-error-marker';
+// Real CLI entry and stdin, with a simulated TTY adapter: native Windows echo
+// behavior needs a separate interactive-terminal acceptance check.
+for (const mode of ['normal', 'mismatch', 'cancel', 'eof', 'non-tty', 'input-error', 'startup-error', 'shutdown-error']) {
+  test(`interactive CLI input and credential-safe output (${mode})`, { timeout: 15_000 }, async (t) => {
+    const password = randomBytes(18).toString('base64url');
+    const wrong = randomBytes(18).toString('base64url');
     const bootstrap = `
       import { Server } from 'node:net';
       import { fileURLToPath } from 'node:url';
       const mode = ${JSON.stringify(mode)};
       const listen = Server.prototype.listen;
       const close = Server.prototype.close;
-      Server.prototype.listen = function (options, ...args) {
-        if (mode === 'startup-error') throw new Error(${JSON.stringify(secret)});
+      Object.defineProperty(process.stdin, 'isTTY', { value: mode !== 'non-tty' });
+      Object.defineProperty(process.stdout, 'isTTY', { value: mode !== 'non-tty' });
+      process.stdin.isRaw = false;
+      process.stdin.setRawMode = (value) => {
+        process.stdin.isRaw = value;
+        process.send({ raw: value });
+        if (mode === 'input-error' && value) throw new Error('Synthetic terminal initialization failure');
+      };
+      Server.prototype.listen = function (port, ...args) {
+        process.send({ listenerAttempt: true, raw: process.stdin.isRaw });
+        if (mode === 'startup-error') throw new Error('Synthetic startup failure');
         this.once('listening', () => process.send({ port: this.address().port }));
         return listen.call(this, 0, ...args);
       };
       if (mode === 'shutdown-error') {
         Server.prototype.close = function (callback) {
-          return close.call(this, (error) => callback(error || new Error(${JSON.stringify(secret)})));
+          return close.call(this, (error) => callback(error || new Error('Synthetic shutdown failure')));
         };
       }
       process.on('message', () => {
-        process.emit('SIGTERM');
+        process.emit('SIGINT');
         process.disconnect();
       });
       process.channel.unref();
@@ -375,44 +388,81 @@ for (const mode of ['normal', 'startup-error', 'shutdown-error']) {
       await import(entry);
     `;
     const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', '--input-type=module', '--eval', bootstrap], {
-      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+      stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
     });
     t.after(() => { if (child.exitCode === null) child.kill(); });
     let stdout = '';
     let stderr = '';
+    const messages = [];
+    child.on('message', (message) => messages.push(message));
     child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });
     child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
+    child.stdin.on('error', () => {});
     const completed = once(child, 'close');
-    if (mode !== 'startup-error') {
-      const ready = await Promise.race([
-        once(child, 'message').then(([message]) => message),
-        completed.then(() => { throw new Error('CLI exited before listening'); }),
-      ]);
-      const pilot = {
-        url: `http://127.0.0.1:${ready.port}/pilot/`,
-        server: { server: { address: () => ({ port: ready.port }) } },
-      };
-      const response = await request(pilot, '/api/session', {
-        method: 'POST',
-        body: { username: 'synthetic-viewer-marker', password: 'synthetic-password-marker' },
-        cookie: 'synthetic-cookie-marker',
-        headers: { Authorization: 'Bearer synthetic-token-marker' },
+    const waitFor = async (predicate) => {
+      for (let attempt = 0; attempt < 500; attempt++) {
+        if (predicate()) return;
+        if (child.exitCode !== null) throw new Error('CLI exited before expected state');
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error('CLI state timeout');
+    };
+    const starts = ['normal', 'mismatch', 'startup-error', 'shutdown-error'].includes(mode);
+    if (!['non-tty', 'input-error'].includes(mode)) {
+      await waitFor(() => stdout.includes('Set temporary password'));
+      assert.equal(messages.some((message) => message.listenerAttempt), false);
+      if (mode === 'cancel') child.stdin.write('\u0003');
+      else if (mode === 'eof') child.stdin.end();
+      else {
+        if (mode === 'mismatch') {
+          child.stdin.write(`${wrong}\r${password}\r`);
+          await waitFor(() => stdout.includes('Please try again.'));
+          assert.equal(messages.some((message) => message.listenerAttempt), false);
+        }
+        child.stdin.write(`${password}\r`);
+        await waitFor(() => stdout.includes('Confirm temporary password'));
+        assert.equal(messages.some((message) => message.listenerAttempt), false);
+        child.stdin.write(`${password}\r`);
+      }
+    }
+    child.stdin.end();
+    const capturedCredentials = [password, wrong];
+    if (starts && mode !== 'startup-error') {
+      await waitFor(() => messages.some((message) => message.port) && stdout.includes('Press Ctrl+C'));
+      const { port } = messages.find((message) => message.port);
+      const pilot = { url: `http://127.0.0.1:${port}/pilot/`, server: { server: { address: () => ({ port }) } } };
+      assert.equal((await request(pilot, '/api/session', {
+        method: 'POST', body: { username: 'pilot-viewer', password: wrong },
+        headers: { Authorization: `Bearer ${wrong}` }, cookie: wrong,
+      })).status, 401);
+      const signedIn = await request(pilot, '/api/session', {
+        method: 'POST', body: { username: 'pilot-viewer', password },
       });
-      assert.equal(response.status, 401);
+      assert.equal(signedIn.status, 200);
+      const cookie = signedIn.headers['set-cookie'][0].split(';', 1)[0];
+      capturedCredentials.push(cookie, cookie.split('=')[1]);
+      const customers = parseJson(await request(pilot, '/api/customers', { cookie })).customers;
+      assert.equal(customers.length, 2);
+      const inquiries = parseJson(await request(pilot, '/api/inquiries', { cookie })).inquiries;
+      assert.equal(inquiries.length, 3);
+      const inquiry = inquiries.find((row) => row.customer_id === customers[0].id);
+      assert.ok(inquiry);
+      assert.equal((await request(pilot, `/api/inquiries/${inquiry.id}`, { cookie })).status, 200);
+      assert.ok(Array.isArray(parseJson(await request(pilot, `/api/inquiries/${inquiry.id}/items`, { cookie })).items));
+      assert.equal((await request(pilot, '/api/session', { method: 'DELETE', cookie })).status, 200);
+      assert.equal((await request(pilot, '/api/customers', { cookie })).status, 401);
       child.send('stop');
     }
     const [code, signal] = await completed;
     assert.equal(signal, null);
-    assert.equal(code, mode === 'normal' ? 0 : 1);
-    if (mode === 'startup-error') {
-      assert.equal(stdout, '');
-      assert.equal(stderr, 'Unable to start the local read-only pilot.\n');
-    } else {
-      assert.match(stdout, /^Local read-only pilot: http:\/\/127\.0\.0\.1:\d+\/pilot\/\nPress Ctrl\+C to stop and erase the in-memory database\.\n$/);
-      assert.equal(stderr, mode === 'normal' ? '' : 'Unable to stop the local read-only pilot.\n');
-    }
-    for (const value of [secret, 'synthetic-viewer-marker', 'synthetic-password-marker',
-      'synthetic-cookie-marker', 'synthetic-token-marker', 'pilot-viewer']) {
+    assert.equal(code, ['normal', 'mismatch'].includes(mode) ? 0 : 1);
+    assert.equal(messages.some((message) => message.listenerAttempt), starts);
+    assert.equal(messages.filter((message) => message.listenerAttempt).every((message) => message.raw === false), true);
+    const rawStates = messages.filter((message) => !message.listenerAttempt && typeof message.raw === 'boolean').map((message) => message.raw);
+    assert.deepEqual(rawStates, mode === 'non-tty' ? [] : [true, false]);
+    assert.equal(stderr === (['normal', 'mismatch'].includes(mode) ? '' : mode === 'shutdown-error'
+      ? 'Unable to stop the local read-only pilot.\n' : 'Unable to start the local read-only pilot.\n'), true);
+    for (const value of [...capturedCredentials, 'Synthetic terminal initialization failure', 'Synthetic startup failure', 'Synthetic shutdown failure']) {
       assert.equal((stdout + stderr).includes(value), false, 'CLI output must exclude credentials and raw errors');
     }
   });

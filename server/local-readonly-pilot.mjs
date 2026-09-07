@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { StringDecoder } from 'node:string_decoder';
 import { openPhase2bDatabase } from './database.mjs';
 import { createCustomerRepository } from './customer-repository.mjs';
 import { HttpServer } from './http-server.mjs';
@@ -310,16 +311,20 @@ export async function createLocalReadonlyPilot({
   host = LOOPBACK_HOST,
   port = PILOT_PORT,
   sessionExpiry = 30 * 60 * 1000,
+  password = randomBytes(18).toString('base64url'),
   pilotDirectory = fileURLToPath(new URL('../pilot/', import.meta.url)),
 } = {}) {
   if (host !== LOOPBACK_HOST) throw new Error('Local read-only pilot must bind to 127.0.0.1');
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid pilot port');
   if (!Number.isSafeInteger(sessionExpiry) || sessionExpiry < 1) throw new Error('Invalid session expiry');
 
+  if (typeof password !== 'string' || password.length < 12 || password.length > 128) {
+    throw new Error('Pilot password must contain 12 to 128 characters.');
+  }
+
   const db = openPhase2bDatabase(':memory:');
   try {
     const seed = seedPilotDatabase(db);
-    const password = randomBytes(18).toString('base64url');
     const credentials = await createCredential(password);
     const staticResponses = new Map();
     for (const route of STATIC_ROUTES) {
@@ -402,8 +407,103 @@ export async function startLocalReadonlyPilot(options = {}) {
   }
 }
 
+export function readInteractivePilotPassword({ input = process.stdin, output = process.stdout, signals = process } = {}) {
+  if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== 'function') {
+    return Promise.reject(new Error('An interactive terminal is required.'));
+  }
+  return new Promise((resolve, reject) => {
+    const wasRaw = Boolean(input.isRaw);
+    const wasFlowing = input.readableFlowing === true;
+    const decoder = new StringDecoder('utf8');
+    let first = '';
+    let current = '';
+    let confirming = false;
+    let settled = false;
+    let previousCR = false;
+    const prompt = () => output.write(confirming ? 'Confirm temporary password: ' : 'Set temporary password (12-128 characters): ');
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      input.removeListener('data', onData);
+      input.removeListener('end', cancel);
+      input.removeListener('error', cancel);
+      signals.removeListener('SIGINT', cancel);
+      signals.removeListener('SIGTERM', cancel);
+      try {
+        input.setRawMode(wasRaw);
+      } catch {
+        error = new Error('Unable to restore terminal state.');
+      } finally {
+        if (wasFlowing) input.resume();
+        else input.pause();
+        first = '';
+        current = '';
+      }
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const cancel = () => finish(new Error('Password entry cancelled.'));
+    const onData = (chunk) => {
+      try {
+        const text = typeof chunk === 'string' ? chunk : decoder.write(chunk);
+        for (const char of text) {
+          if (settled) break;
+          if (char === '\n' && previousCR) { previousCR = false; continue; }
+          previousCR = char === '\r';
+          if (['\u0003', '\u0004', '\u001a', '\u001b'].includes(char)) { cancel(); break; }
+          if (char === '\r' || char === '\n') {
+            output.write('\n');
+            if (!confirming && current.length >= 12 && current.length <= 128) {
+              first = current;
+              current = '';
+              confirming = true;
+            } else if (confirming && current === first) {
+              finish(null, first);
+              break;
+            } else {
+              first = '';
+              current = '';
+              confirming = false;
+              output.write('Password length or confirmation did not match. Please try again.\n');
+            }
+            prompt();
+          } else if (char === '\u007f' || char === '\b') {
+            current = Array.from(current).slice(0, -1).join('');
+          } else if (char.codePointAt(0) >= 32) {
+            if (current.length + char.length > 128) { cancel(); break; }
+            current += char;
+          } else {
+            cancel();
+            break;
+          }
+        }
+      } catch {
+        finish(new Error('Unable to read password input.'));
+      }
+    };
+    input.on('data', onData);
+    input.once('end', cancel);
+    input.once('error', cancel);
+    signals.once('SIGINT', cancel);
+    signals.once('SIGTERM', cancel);
+    try {
+      input.setRawMode(true);
+      prompt();
+      input.resume();
+    } catch {
+      finish(new Error('Unable to initialize password input.'));
+    }
+  });
+}
+
 async function runCli() {
-  const pilot = await startLocalReadonlyPilot({ host: LOOPBACK_HOST, port: PILOT_PORT });
+  let password = await readInteractivePilotPassword();
+  let pilot;
+  try {
+    pilot = await startLocalReadonlyPilot({ host: LOOPBACK_HOST, port: PILOT_PORT, password });
+  } finally {
+    password = undefined;
+  }
   console.log(`Local read-only pilot: ${pilot.url}`);
   console.log('Press Ctrl+C to stop and erase the in-memory database.');
 
