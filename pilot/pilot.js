@@ -163,6 +163,9 @@
       }
       if (payload === null) throw new RequestError(response.status, '伺服器回應格式不正確。');
       return payload;
+    } catch (error) {
+      if (expectedGeneration !== state.generation) throw new StaleRequestError();
+      throw error;
     } finally {
       state.controllers.delete(controller);
     }
@@ -287,13 +290,14 @@
     const remaining = Number(expiresAt) - Date.now();
     if (!Number.isFinite(remaining) || remaining <= 0) {
       handleSessionLoss();
-      return;
+      return false;
     }
     const delay = Math.min(remaining, 2_147_483_647);
     state.expiryTimer = window.setTimeout(() => {
       if (delay < remaining) scheduleExpiry(expiresAt);
       else handleSessionLoss();
     }, delay);
+    return true;
   }
 
   async function loadCustomers() {
@@ -382,6 +386,7 @@
       await apiFetch('/api/session', { method: 'DELETE', allowUnauthorized: true });
       confirmed = true;
     } catch (error) {
+      if (isCancelled(error)) return;
       confirmed = error.status === 401;
     }
     renderLoggedOut({
@@ -390,7 +395,8 @@
     });
   }
 
-  async function acceptSession(session) {
+  async function acceptSession(session, generation) {
+    if (generation !== state.generation || state.logoutUnconfirmed) return;
     if (!session || session.role !== 'viewer' || typeof session.actorId !== 'string'
       || !Number.isFinite(Number(session.expiresAt))) {
       await rejectUnexpectedSession();
@@ -404,7 +410,7 @@
     show(elements['pilot-view']);
     setText(elements['session-summary'], `已登入：${session.actorId}（viewer）`);
     setStatus('', false);
-    scheduleExpiry(session.expiresAt);
+    if (!scheduleExpiry(session.expiresAt)) return;
     await loadCustomers();
   }
 
@@ -417,14 +423,20 @@
     show(elements['pilot-view'], false);
     setStatus('正在確認登入狀態…');
     try {
-      const session = await apiFetch('/api/session', { generation, allowUnauthorized: true });
-      await acceptSession(session);
+      await apiFetch('/api/session', { generation, allowUnauthorized: true });
+      // A surviving cookie cannot tell us whether an earlier DELETE failed.
+      // Do not restore business data across a document/page lifecycle boundary.
+      // Revoke the old session explicitly, then use the existing login form.
+      renderLoggedOut({
+        message: '既有工作階段尚未撤銷。請重試登出後重新登入。',
+        logoutUnconfirmed: true,
+      });
     } catch (error) {
       if (isCancelled(error)) return;
       if (error.status === 401) {
         renderLoggedOut({ message: afterPageRestore && state.wasAuthenticatedBeforePageHide ? '登入已失效，請重新登入。' : '' });
       } else {
-        renderLoggedOut({ message: '無法確認登入狀態，請稍後再試。' });
+        renderLoggedOut({ message: '無法確認工作階段是否已撤銷，請重試登出。', logoutUnconfirmed: true });
       }
     } finally {
       state.wasAuthenticatedBeforePageHide = false;
@@ -449,7 +461,7 @@
     try {
       await apiFetch('/api/session', { method: 'POST', body: { username, password }, generation, allowUnauthorized: true });
       const session = await apiFetch('/api/session', { generation });
-      await acceptSession(session);
+      await acceptSession(session, generation);
     } catch (error) {
       if (isCancelled(error)) return;
       renderLoggedOut({ message: error.status === 401 ? '帳號或密碼不正確。' : '登入失敗，請稍後再試。' });
@@ -459,10 +471,13 @@
   }
 
   async function logout() {
+    state.logoutUnconfirmed = true;
     const generation = invalidateRequests();
     clearExpiryTimer();
     state.session = null;
     clearBusinessData();
+    setText(elements['session-summary'], '');
+    elements.password.value = '';
     show(elements['pilot-view'], false);
     show(elements['login-view']);
     elements['login-button'].disabled = true;

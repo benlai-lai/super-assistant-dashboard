@@ -5,6 +5,8 @@ import { once } from 'node:events';
 import { request as httpRequest } from 'node:http';
 import { createConnection } from 'node:net';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 import { getSchemaVersion } from '../server/database.mjs';
 import { startLocalReadonlyPilot } from '../server/local-readonly-pilot.mjs';
 
@@ -465,5 +467,203 @@ for (const mode of ['normal', 'mismatch', 'cancel', 'eof', 'non-tty', 'input-err
     for (const value of [...capturedCredentials, 'Synthetic terminal initialization failure', 'Synthetic startup failure', 'Synthetic shutdown failure']) {
       assert.equal((stdout + stderr).includes(value), false, 'CLI output must exclude credentials and raw errors');
     }
+  });
+}
+
+// Execute the shipped UI in a minimal DOM adapter. Lifecycle events here are
+// synthetic, not evidence of browser BFCache eligibility (verified separately).
+const pilotUiSource = readFileSync(new URL('../pilot/pilot.js', import.meta.url), 'utf8');
+const pilotHtmlSource = readFileSync(new URL('../pilot/index.html', import.meta.url), 'utf8');
+const protectedIds = ['customer-list', 'customer-detail', 'inquiry-list', 'inquiry-detail', 'item-list'];
+const uiSession = () => ({ actorId: 'local-readonly-pilot-viewer', role: 'viewer', expiresAt: Date.now() + 60_000 });
+const uiResponse = (status, value) => ({ ok: status >= 200 && status < 300, status,
+  headers: { get: () => 'application/json' }, json: async () => value });
+const uiTick = async () => { for (let i = 0; i < 12; i++) await new Promise(resolve => setImmediate(resolve)); };
+function deferredUiResponse() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+function uiApi() {
+  return {
+    session: null, failDelete: false, calls: [], intercept: null,
+    async fetch(url, options) {
+      const method = options.method;
+      this.calls.push(`${method} ${url}`);
+      const intercepted = this.intercept?.(url, options);
+      if (intercepted) return intercepted;
+      if (url === '/api/session') {
+        if (method === 'POST') { this.session = uiSession(); return uiResponse(200, {}); }
+        if (method === 'DELETE') {
+          if (this.failDelete) throw new TypeError('Synthetic network failure');
+          this.session = null;
+          return uiResponse(200, { success: true });
+        }
+        return this.session ? uiResponse(200, this.session) : uiResponse(401, {});
+      }
+      if (!this.session) return uiResponse(401, {});
+      const customer = { id: 'synthetic-customer', display_name: 'Synthetic customer', contact_name: 'Synthetic contact' };
+      const inquiry = { id: 'synthetic-inquiry', customer_id: customer.id, title: 'Synthetic inquiry' };
+      if (url.startsWith('/api/customers?')) return uiResponse(200, { customers: [customer] });
+      if (url.startsWith('/api/customers/')) return uiResponse(200, { customer });
+      if (url.startsWith('/api/inquiries?')) return uiResponse(200, { inquiries: [inquiry] });
+      if (url.endsWith('/items')) return uiResponse(200, { items: [{ description: 'Synthetic item', quantity: 1 }] });
+      return uiResponse(200, { inquiry });
+    },
+  };
+}
+function pilotUi(api) {
+  class Element {
+    constructor() { this.children = []; this.listeners = {}; this.dataset = {}; this.hidden = true; this.disabled = false; this.value = ''; this.text = ''; }
+    set textContent(value) { this.text = String(value); this.children = []; }
+    get textContent() { return this.text + this.children.map(child => child.textContent).join(''); }
+    replaceChildren(...children) { this.text = ''; this.children = children; }
+    append(...children) { this.children.push(...children); }
+    addEventListener(type, handler) { this.listeners[type] = handler; }
+  }
+  const elements = Object.fromEntries([...pilotHtmlSource.matchAll(/\bid="([^"]+)"/g)].map(match => [match[1], new Element()]));
+  const events = {}, timers = new Map();
+  let nextTimer = 0;
+  const document = { getElementById: id => elements[id], createElement: () => new Element(),
+    addEventListener: (type, handler) => { events[type] = handler; } };
+  const window = { location: new URL('http://127.0.0.1:18885/pilot/'),
+    fetch: (url, options) => api.fetch(url, options),
+    addEventListener: (type, handler) => { events[type] = handler; },
+    setTimeout: handler => { timers.set(++nextTimer, handler); return nextTimer; },
+    clearTimeout: id => timers.delete(id) };
+  for (const name of ['localStorage', 'sessionStorage']) Object.defineProperty(window, name, { get() { throw new Error('Browser storage is forbidden'); } });
+  runInNewContext(pilotUiSource, { window, document, AbortController, Intl, Date });
+  events.DOMContentLoaded();
+  return {
+    elements, timers,
+    async event(type, value = {}) { events[type](value); await uiTick(); },
+    async click(id) { assert.equal(elements[id].disabled, false); elements[id].listeners.click(); await uiTick(); },
+    async login() {
+      assert.equal(elements['login-button'].disabled, false);
+      elements.username.value = 'pilot-viewer';
+      elements.password.value = randomBytes(18).toString('base64url');
+      elements['login-form'].listeners.submit({ preventDefault() {} });
+      await uiTick();
+      assert.equal(elements.password.value, '');
+    },
+    async details() {
+      elements['customer-list'].children[0].children[0].listeners.click(); await uiTick();
+      elements['inquiry-list'].children[0].children[0].listeners.click(); await uiTick();
+    },
+    assertCleared() {
+      assert.equal(elements['pilot-view'].hidden, true);
+      for (const id of [...protectedIds, 'session-summary', 'customer-count', 'inquiry-count', 'item-count']) assert.equal(elements[id].textContent, '', id);
+    },
+    assertPending() {
+      this.assertCleared();
+      assert.equal(elements['logout-retry'].hidden, false);
+      assert.equal(elements['login-button'].disabled, true);
+      assert.equal(elements['login-error'].textContent.length > 0, true);
+    },
+  };
+}
+
+test('UI failed logout stays cleared across synthetic pageshow and fresh-document reload; retry permits explicit login', async () => {
+  const api = uiApi(), first = pilotUi(api);
+  await uiTick(); await first.login(); await first.details();
+  for (const id of protectedIds) assert.notEqual(first.elements[id].textContent, '');
+  api.failDelete = true;
+  await first.click('logout-button'); first.assertPending();
+  const businessBefore = api.calls.filter(call => !call.includes('/api/session')).length;
+  await first.event('pagehide'); await first.event('pageshow', { persisted: true }); first.assertPending();
+  const reloaded = pilotUi(api); await uiTick(); reloaded.assertPending();
+  assert.equal(api.calls.filter(call => !call.includes('/api/session')).length, businessBefore);
+  api.failDelete = false;
+  await reloaded.click('retry-logout-button'); reloaded.assertCleared();
+  assert.equal(api.session, null);
+  await reloaded.login(); assert.equal(reloaded.elements['pilot-view'].hidden, false);
+  await reloaded.click('logout-button'); reloaded.assertCleared();
+  assert.equal(api.session, null);
+});
+
+test('UI fresh document never auto-accepts an existing cookie; unknown session offers retry', async () => {
+  const api = uiApi(); api.session = uiSession();
+  const ui = pilotUi(api); await uiTick(); ui.assertPending();
+  assert.deepEqual(api.calls, ['GET /api/session']);
+  api.intercept = url => url === '/api/session' ? Promise.reject(new TypeError('Synthetic offline')) : null;
+  const offline = pilotUi(api); await uiTick(); offline.assertPending();
+});
+
+test('UI 401 and scheduled expiry clear rendered data and allow explicit login', async () => {
+  for (const cause of ['401', 'timer']) {
+    const api = uiApi(), ui = pilotUi(api); await uiTick(); await ui.login(); await ui.details();
+    if (cause === '401') {
+      api.session = null;
+      await ui.click('back-to-customers');
+      ui.elements['customer-list'].children[0].children[0].listeners.click(); await uiTick();
+    } else {
+      const timer = [...ui.timers.values()][0]; assert.ok(timer); timer(); await uiTick();
+    }
+    ui.assertCleared(); assert.equal(ui.elements['login-button'].disabled, false);
+  }
+});
+
+test('UI already-expired login session never opens protected panel or requests customers', async () => {
+  const api = uiApi(), ui = pilotUi(api); await uiTick();
+  api.intercept = (url, options) => url === '/api/session' && options.method === 'GET'
+    ? Promise.resolve(uiResponse(200, { ...uiSession(), expiresAt: Date.now() - 1 })) : null;
+  await ui.login(); ui.assertCleared();
+  assert.equal(api.calls.some(call => call.includes('/api/customers')), false);
+});
+
+test('UI ignores late business success after failed logout even when fetch ignores abort', async () => {
+  const api = uiApi(), ui = pilotUi(api); await uiTick(); await ui.login();
+  const late = deferredUiResponse();
+  api.intercept = url => url.startsWith('/api/customers/') ? late.promise : null;
+  ui.elements['customer-list'].children[0].children[0].listeners.click(); await uiTick();
+  api.failDelete = true; await ui.click('logout-button'); ui.assertPending();
+  late.resolve(uiResponse(200, { customer: { id: 'late', display_name: 'Late secret' } }));
+  await uiTick(); ui.assertPending();
+});
+
+test('UI ignores late session acceptance after pagehide and failed logout', async () => {
+  const api = uiApi(), ui = pilotUi(api); await uiTick();
+  const late = deferredUiResponse();
+  api.intercept = (url, options) => url === '/api/session' && options.method === 'GET' ? late.promise : null;
+  await ui.login();
+  await ui.event('pagehide');
+  api.failDelete = true; await ui.click('logout-button');
+  late.resolve(uiResponse(200, uiSession())); await uiTick(); ui.assertPending();
+  assert.equal(api.calls.some(call => call.includes('/api/customers')), false);
+});
+
+test('UI stale JSON rejection cannot replace a new authenticated view', async () => {
+  const api = uiApi(), ui = pilotUi(api); await uiTick(); await ui.login();
+  const late = deferredUiResponse();
+  api.intercept = url => url.startsWith('/api/customers/') ? Promise.resolve({ ...uiResponse(200, {}), json: () => late.promise }) : null;
+  ui.elements['customer-list'].children[0].children[0].listeners.click(); await uiTick();
+  await ui.click('logout-button'); api.intercept = null;
+  await ui.login(); assert.equal(ui.elements['pilot-view'].hidden, false);
+  late.reject(new SyntaxError('Synthetic late JSON failure')); await uiTick();
+  assert.equal(ui.elements['pilot-view'].hidden, false);
+  assert.equal(ui.elements['global-error'].hidden, true);
+  assert.equal(ui.elements['customer-detail-status'].textContent, '');
+});
+for (const phase of ['POST login', 'GET after login', 'DELETE retry']) {
+  test(`UI ${phase} 401 clears data and leaves an explicit login path`, async () => {
+    const api = uiApi(), ui = pilotUi(api); await uiTick();
+    if (phase === 'DELETE retry') {
+      await ui.login(); await ui.details();
+      api.failDelete = true; await ui.click('logout-button'); ui.assertPending();
+    }
+    api.intercept = (url, options) => {
+      const expectedMethod = phase === 'POST login' ? 'POST' : phase === 'GET after login' ? 'GET' : 'DELETE';
+      if (url !== '/api/session' || options.method !== expectedMethod) return null;
+      api.session = null;
+      return Promise.resolve(uiResponse(401, {}));
+    };
+    if (phase === 'DELETE retry') await ui.click('retry-logout-button');
+    else await ui.login();
+    ui.assertCleared();
+    assert.equal(ui.elements['login-button'].disabled, false);
+    assert.equal(ui.elements['logout-retry'].hidden, true);
+    if (phase !== 'DELETE retry') assert.equal(api.calls.some(call => call.includes('/api/customers')), false);
+    api.intercept = null;
+    await ui.login(); assert.equal(ui.elements['pilot-view'].hidden, false);
   });
 }
