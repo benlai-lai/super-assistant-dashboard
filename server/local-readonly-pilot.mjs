@@ -405,8 +405,6 @@ export async function startLocalReadonlyPilot(options = {}) {
 async function runCli() {
   const pilot = await startLocalReadonlyPilot({ host: LOOPBACK_HOST, port: PILOT_PORT });
   console.log(`Local read-only pilot: ${pilot.url}`);
-  console.log(`Viewer username: ${pilot.username}`);
-  console.log(`Temporary password: ${pilot.password}`);
   console.log('Press Ctrl+C to stop and erase the in-memory database.');
 
   let stopping = false;
@@ -416,8 +414,8 @@ async function runCli() {
     try {
       await pilot.close();
       process.exitCode = 0;
-    } catch (error) {
-      console.error(error instanceof Error ? error.message : String(error));
+    } catch {
+      console.error('Unable to stop the local read-only pilot.');
       process.exitCode = 1;
     }
   };
@@ -426,8 +424,8 @@ async function runCli() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  runCli().catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
+  runCli().catch(() => {
+    console.error('Unable to start the local read-only pilot.');
     process.exitCode = 1;
   });
 }

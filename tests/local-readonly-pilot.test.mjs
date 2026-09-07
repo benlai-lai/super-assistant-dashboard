@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { request as httpRequest } from 'node:http';
 import { createConnection } from 'node:net';
 import test from 'node:test';
@@ -343,3 +345,75 @@ test('close drains the listener, revokes sessions, closes SQLite, and is idempot
   await assert.doesNotReject(pilot.close());
   await assert.rejects(request(pilot, '/pilot/'));
 });
+
+for (const mode of ['normal', 'startup-error', 'shutdown-error']) {
+  test(`CLI keeps credentials out of stdout and stderr (${mode})`, { timeout: 15_000 }, async (t) => {
+    const secret = 'synthetic-sensitive-error-marker';
+    const bootstrap = `
+      import { Server } from 'node:net';
+      import { fileURLToPath } from 'node:url';
+      const mode = ${JSON.stringify(mode)};
+      const listen = Server.prototype.listen;
+      const close = Server.prototype.close;
+      Server.prototype.listen = function (options, ...args) {
+        if (mode === 'startup-error') throw new Error(${JSON.stringify(secret)});
+        this.once('listening', () => process.send({ port: this.address().port }));
+        return listen.call(this, 0, ...args);
+      };
+      if (mode === 'shutdown-error') {
+        Server.prototype.close = function (callback) {
+          return close.call(this, (error) => callback(error || new Error(${JSON.stringify(secret)})));
+        };
+      }
+      process.on('message', () => {
+        process.emit('SIGTERM');
+        process.disconnect();
+      });
+      process.channel.unref();
+      const entry = ${JSON.stringify(new URL('../server/local-readonly-pilot.mjs', import.meta.url).href)};
+      process.argv[1] = fileURLToPath(entry);
+      await import(entry);
+    `;
+    const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', '--input-type=module', '--eval', bootstrap], {
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+    });
+    t.after(() => { if (child.exitCode === null) child.kill(); });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
+    const completed = once(child, 'close');
+    if (mode !== 'startup-error') {
+      const ready = await Promise.race([
+        once(child, 'message').then(([message]) => message),
+        completed.then(() => { throw new Error('CLI exited before listening'); }),
+      ]);
+      const pilot = {
+        url: `http://127.0.0.1:${ready.port}/pilot/`,
+        server: { server: { address: () => ({ port: ready.port }) } },
+      };
+      const response = await request(pilot, '/api/session', {
+        method: 'POST',
+        body: { username: 'synthetic-viewer-marker', password: 'synthetic-password-marker' },
+        cookie: 'synthetic-cookie-marker',
+        headers: { Authorization: 'Bearer synthetic-token-marker' },
+      });
+      assert.equal(response.status, 401);
+      child.send('stop');
+    }
+    const [code, signal] = await completed;
+    assert.equal(signal, null);
+    assert.equal(code, mode === 'normal' ? 0 : 1);
+    if (mode === 'startup-error') {
+      assert.equal(stdout, '');
+      assert.equal(stderr, 'Unable to start the local read-only pilot.\n');
+    } else {
+      assert.match(stdout, /^Local read-only pilot: http:\/\/127\.0\.0\.1:\d+\/pilot\/\nPress Ctrl\+C to stop and erase the in-memory database\.\n$/);
+      assert.equal(stderr, mode === 'normal' ? '' : 'Unable to stop the local read-only pilot.\n');
+    }
+    for (const value of [secret, 'synthetic-viewer-marker', 'synthetic-password-marker',
+      'synthetic-cookie-marker', 'synthetic-token-marker', 'pilot-viewer']) {
+      assert.equal((stdout + stderr).includes(value), false, 'CLI output must exclude credentials and raw errors');
+    }
+  });
+}
