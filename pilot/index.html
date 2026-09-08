@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>本機只讀試用｜超級助理 Dashboard</title>
+  <link rel="stylesheet" href="./pilot.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到主要內容</a>
+  <main id="main-content" class="shell">
+    <header class="masthead">
+      <div>
+        <p class="eyebrow">Super Assistant Dashboard</p>
+        <h1>本機只讀試用</h1>
+        <p class="subtitle">查看測試客戶、詢價與品項。此入口不提供新增或修改功能。</p>
+      </div>
+      <span class="readonly-badge">VIEWER・唯讀</span>
+    </header>
+    <section id="environment-blocked" data-testid="environment-blocked" class="notice danger" role="alert" hidden>
+      <h2>此頁面已停止運作</h2>
+      <p>請從 <code>http://127.0.0.1:18885/pilot/</code> 開啟本機試用。此頁面不會從目前位置連線 API。</p>
+    </section>
+    <p id="app-status" data-testid="app-status" class="status" role="status" aria-live="polite">正在確認登入狀態…</p>
+    <section id="login-view" data-testid="login-view" class="card login-card" aria-labelledby="login-title" hidden>
+      <p class="eyebrow">測試工作階段</p>
+      <h2 id="login-title">登入 viewer 帳號</h2>
+      <p class="hint">帳號為 pilot-viewer；請輸入本次啟動服務時自行設定的臨時密碼。終端輸入密碼時不會顯示字元。</p>
+      <form id="login-form" data-testid="login-form" novalidate>
+        <label for="username">帳號</label>
+        <input id="username" data-testid="username" name="username" type="text" autocomplete="username" required>
+        <label for="password">密碼</label>
+        <input id="password" data-testid="password" name="password" type="password" autocomplete="current-password" required>
+        <button id="login-button" data-testid="login-button" class="button primary" type="submit">登入</button>
+      </form>
+      <p id="login-error" data-testid="login-error" class="form-message danger-text" role="alert" hidden></p>
+      <div id="logout-retry" data-testid="logout-retry" class="logout-retry" hidden>
+        <p>登出撤銷尚未確認。畫面資料已清除，請重試撤銷工作階段。</p>
+        <button id="retry-logout-button" data-testid="retry-logout-button" class="button secondary" type="button">重試登出</button>
+      </div>
+    </section>
+    <section id="pilot-view" data-testid="pilot-view" hidden>
+      <div class="session-bar">
+        <p id="session-summary" data-testid="session-summary">已使用 viewer 身分登入</p>
+        <button id="logout-button" data-testid="logout-button" class="button secondary" type="button">登出</button>
+      </div>
+      <p id="global-error" data-testid="global-error" class="notice danger" role="alert" hidden></p>
+      <div class="workspace">
+        <section class="card list-card" aria-labelledby="customer-list-title">
+          <div class="section-heading"><div><p class="eyebrow">Customers</p><h2 id="customer-list-title">測試客戶</h2></div><span id="customer-count" class="count" aria-live="polite"></span></div>
+          <p id="customer-list-status" data-testid="customer-list-status" class="panel-status" role="status"></p>
+          <ul id="customer-list" data-testid="customer-list" class="record-list"></ul>
+        </section>
+        <section id="customer-detail-panel" data-testid="customer-detail-panel" class="card detail-card" aria-labelledby="customer-detail-title" hidden>
+          <button id="back-to-customers" data-testid="back-to-customers" class="back-button" type="button">← 返回客戶清單</button>
+          <p class="eyebrow">Customer detail</p>
+          <h2 id="customer-detail-title">客戶資料</h2>
+          <p id="customer-detail-status" class="panel-status" role="status"></p>
+          <dl id="customer-detail" data-testid="customer-detail" class="detail-grid"></dl>
+          <div id="inquiry-section" class="subsection" hidden>
+            <div class="section-heading compact"><h3>詢價紀錄</h3><span id="inquiry-count" class="count" aria-live="polite"></span></div>
+            <p id="inquiry-list-status" data-testid="inquiry-list-status" class="panel-status" role="status"></p>
+            <ul id="inquiry-list" data-testid="inquiry-list" class="record-list"></ul>
+          </div>
+        </section>
+        <section id="inquiry-detail-panel" data-testid="inquiry-detail-panel" class="card detail-card" aria-labelledby="inquiry-detail-title" hidden>
+          <button id="back-to-inquiries" data-testid="back-to-inquiries" class="back-button" type="button">← 返回詢價紀錄</button>
+          <p class="eyebrow">Inquiry detail</p>
+          <h2 id="inquiry-detail-title">詢價明細</h2>
+          <p id="inquiry-detail-status" class="panel-status" role="status"></p>
+          <dl id="inquiry-detail" data-testid="inquiry-detail" class="detail-grid"></dl>
+          <div id="item-section" class="subsection" hidden>
+            <div class="section-heading compact"><h3>詢價品項</h3><span id="item-count" class="count" aria-live="polite"></span></div>
+            <p id="item-list-status" data-testid="item-list-status" class="panel-status" role="status"></p>
+            <ul id="item-list" data-testid="item-list" class="item-list"></ul>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+  <script src="./pilot.js" defer></script>
+</body>
+</html>
