@@ -81,16 +81,17 @@ class CredentialManager {
  * Simple in-memory implementation
  */
 class RateLimiter {
-  constructor(maxAttempts = 5, windowMs = 15 * 60 * 1000, maxEntries = 1000) {
+  constructor(maxAttempts = 5, windowMs = 15 * 60 * 1000, maxEntries = 1000, now = () => Date.now()) {
     this.maxAttempts = maxAttempts;
     this.windowMs = windowMs;
     this.maxEntries = maxEntries;
+    this.now = now;
     // Map<ip, { attempts, resetTime }>
     this.attempts = new Map();
   }
 
   isLimited(ip) {
-    const now = Date.now();
+    const now = this.now();
     this.cleanupExpired(now);
     const record = this.attempts.get(ip);
 
@@ -106,7 +107,7 @@ class RateLimiter {
     return record.attempts > this.maxAttempts;
   }
 
-  cleanupExpired(now = Date.now()) {
+  cleanupExpired(now = this.now()) {
     for (const [ip, record] of this.attempts) {
       if (now >= record.resetTime) {
         this.attempts.delete(ip);
@@ -115,10 +116,11 @@ class RateLimiter {
   }
 
   isBlocked(key) {
-    const now = Date.now();
+    const now = this.now();
     this.cleanupExpired(now);
     const record = this.attempts.get(key);
-    return Boolean(record && record.attempts >= this.maxAttempts);
+    if (record) return record.attempts >= this.maxAttempts;
+    return this.attempts.size >= this.maxEntries;
   }
 
   reset(ip) {
@@ -140,11 +142,13 @@ export class HttpServer {
       options.maxLoginAttempts || 5,
       options.rateLimitWindowMs || 15 * 60 * 1000,
       options.maxRateLimitEntries || 1000,
+      options.rateLimitNow || (() => Date.now()),
     );
     this.loginFailureLimiter = new RateLimiter(
       options.maxLoginAttempts || 5,
       options.rateLimitWindowMs || 15 * 60 * 1000,
       options.maxRateLimitEntries || 1000,
+      options.rateLimitNow || (() => Date.now()),
     );
     this.server = null;
     this.port = options.port ?? 8080;

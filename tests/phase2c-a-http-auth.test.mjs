@@ -919,6 +919,29 @@ test('HTTP Server - successful logins do not clear shared-IP failed-login protec
   }
 });
 
+test('HTTP Server - shared failed-login limiter fails closed at capacity and recovers after expiry', async () => {
+  let now = 1_000;
+  const server = createHttpServer({
+    maxLoginAttempts: 2,
+    maxRateLimitEntries: 1,
+    rateLimitWindowMs: 500,
+    rateLimitNow: () => now,
+  });
+  try {
+    assert.equal(server.loginFailureLimiter.isLimited('198.51.100.10'), false);
+    assert.equal(server.loginFailureLimiter.isBlocked('198.51.100.20'), true, 'an untracked IP must fail closed when capacity is full');
+    assert.equal(server.loginFailureLimiter.attempts.size, 1);
+
+    now += 501;
+    assert.equal(server.loginFailureLimiter.isBlocked('198.51.100.20'), false, 'expired entries must release capacity');
+    assert.equal(server.loginFailureLimiter.isLimited('198.51.100.20'), false);
+    assert.equal(server.loginFailureLimiter.attempts.has('198.51.100.10'), false);
+    assert.equal(server.loginFailureLimiter.attempts.has('198.51.100.20'), true);
+  } finally {
+    await server.close();
+  }
+});
+
 test('HTTP Server - Different actors have different roles', async () => {
   const editorPassword = 'editor-password-123';
   const editorSalt = randomBytes(16);

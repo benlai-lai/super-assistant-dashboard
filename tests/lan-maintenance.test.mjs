@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { openPhase2bDatabase } from '../server/database.mjs';
@@ -135,8 +135,113 @@ test('restore rolls back every moved live file and removes temporary sidecars af
     assert.deepEqual(readFileSync(`${databasePath}-wal`), fakeWal);
     assert.deepEqual(readFileSync(`${databasePath}-shm`), fakeShm);
     assert.equal(readdirSync(join(root, 'data')).some((name) => name.includes('.restore-')), false);
+    assert.equal(existsSync(join(root, 'data', 'recovery')), false, 'failed restore must remove its new empty recovery directories');
     assert.equal(existsSync(`${backupPath}-wal`), false);
     assert.equal(existsSync(`${backupPath}-shm`), false);
+  } finally {
+    db?.close();
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(existsSync(root), false);
+  }
+});
+
+test('restore cleans a partial temporary copy when copy fails before validation', async () => {
+  const root = mkdtempSync(join(testParent, 'dashboard-lan-restore-copy-failure-'));
+  const databasePath = join(root, 'data', 'pilot.sqlite3');
+  const backupPath = join(root, 'backups', 'snapshot.sqlite3');
+  mkdirSync(join(root, 'data'), { recursive: true });
+  let db = openPhase2bDatabase(databasePath);
+  try {
+    await createLanPilotBackup({ db, backupPath, allowedRoot: root, now: () => '2026-09-08T02:10:00.000Z' });
+    db.close(); db = null;
+    const liveBytes = readFileSync(databasePath);
+    assert.throws(
+      () => restoreLanPilotBackup({
+        databasePath,
+        backupPath,
+        allowedRoot: root,
+        copyFile(from, to) {
+          writeFileSync(to, 'partial synthetic copy');
+          throw new Error('synthetic copy failure');
+        },
+      }),
+      /synthetic copy failure/,
+    );
+    assert.deepEqual(readFileSync(databasePath), liveBytes);
+    assert.equal(readdirSync(join(root, 'data')).some((name) => name.includes('.restore-')), false);
+    assert.equal(existsSync(join(root, 'data', 'recovery')), false);
+  } finally {
+    db?.close();
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(existsSync(root), false);
+  }
+});
+
+test('failed restore preserves a pre-existing empty recovery parent', async () => {
+  const root = mkdtempSync(join(testParent, 'dashboard-lan-existing-recovery-parent-'));
+  const databasePath = join(root, 'data', 'pilot.sqlite3');
+  const backupPath = join(root, 'backups', 'snapshot.sqlite3');
+  const recoveryParent = join(root, 'data', 'recovery');
+  mkdirSync(recoveryParent, { recursive: true });
+  let db = openPhase2bDatabase(databasePath);
+  try {
+    await createLanPilotBackup({ db, backupPath, allowedRoot: root, now: () => '2026-09-08T02:20:00.000Z' });
+    db.close(); db = null;
+    assert.throws(
+      () => restoreLanPilotBackup({
+        databasePath,
+        backupPath,
+        allowedRoot: root,
+        now: () => '2026-09-08T02:21:00.000Z',
+        renameFile() { throw new Error('synthetic move failure'); },
+      }),
+      /synthetic move failure/,
+    );
+    assert.equal(existsSync(recoveryParent), true, 'a pre-existing recovery parent must be preserved');
+    assert.deepEqual(readdirSync(recoveryParent), []);
+  } finally {
+    db?.close();
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(existsSync(root), false);
+  }
+});
+
+test('failed restore preserves non-empty recovery content for manual recovery', async () => {
+  const root = mkdtempSync(join(testParent, 'dashboard-lan-nonempty-recovery-'));
+  const databasePath = join(root, 'data', 'pilot.sqlite3');
+  const backupPath = join(root, 'backups', 'snapshot.sqlite3');
+  mkdirSync(join(root, 'data'), { recursive: true });
+  let db = openPhase2bDatabase(databasePath);
+  try {
+    await createLanPilotBackup({ db, backupPath, allowedRoot: root, now: () => '2026-09-08T02:30:00.000Z' });
+    db.close(); db = null;
+    const liveBytes = readFileSync(databasePath);
+    let recoveryDirectory;
+    let renameCalls = 0;
+    assert.throws(
+      () => restoreLanPilotBackup({
+        databasePath,
+        backupPath,
+        allowedRoot: root,
+        now: () => '2026-09-08T02:31:00.000Z',
+        renameFile(from, to) {
+          renameCalls += 1;
+          if (renameCalls === 1) {
+            recoveryDirectory = dirname(to);
+            renameSync(from, to);
+            writeFileSync(join(recoveryDirectory, 'manual-recovery-note.txt'), 'preserve');
+            return;
+          }
+          if (renameCalls === 2) throw new Error('synthetic install failure');
+          renameSync(from, to);
+        },
+      }),
+      /synthetic install failure/,
+    );
+    assert.deepEqual(readFileSync(databasePath), liveBytes);
+    assert.equal(readFileSync(join(recoveryDirectory, 'manual-recovery-note.txt'), 'utf8'), 'preserve');
+    assert.equal(existsSync(recoveryDirectory), true, 'non-empty recovery content must be preserved');
+    assert.equal(readdirSync(join(root, 'data')).some((name) => name.includes('.restore-')), false);
   } finally {
     db?.close();
     rmSync(root, { recursive: true, force: true });

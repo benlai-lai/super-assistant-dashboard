@@ -6,6 +6,7 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
+  rmdirSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -98,6 +99,7 @@ export function restoreLanPilotBackup({
   manifestPath = `${backupPath}.manifest.json`,
   allowedRoot,
   now = () => new Date().toISOString(),
+  copyFile = copyFileSync,
   renameFile = renameSync,
 }) {
   const target = assertPilotDataPath(databasePath, allowedRoot);
@@ -137,8 +139,13 @@ export function restoreLanPilotBackup({
 
   mkdirSync(dirname(target), { recursive: true });
   const temporary = assertPilotDataPath(`${target}.restore-${randomUUID()}.tmp`, allowedRoot);
-  copyFileSync(source, temporary);
+  let recoveryDirectory = null;
+  let recoveryParent = null;
+  let recoveryParentExisted = false;
+  let recoveryDirectoryCreated = false;
+  let restoreCompleted = false;
   try {
+    copyFile(source, temporary);
     if (sha256(temporary) !== manifest.sha256) throw new Error('Restored copy checksum mismatch');
     const restoredValidation = validateSnapshot(temporary);
     if (
@@ -152,13 +159,16 @@ export function restoreLanPilotBackup({
       throw new Error('Restored copy schema validation mismatch');
     }
 
-    const recoveryDirectory = assertPilotDataPath(
+    recoveryDirectory = assertPilotDataPath(
       resolve(dirname(target), 'recovery', now().replace(/[:.]/g, '-')),
       allowedRoot,
     );
-    mkdirSync(dirname(recoveryDirectory), { recursive: true });
+    recoveryParent = dirname(recoveryDirectory);
+    recoveryParentExisted = existsSync(recoveryParent);
+    mkdirSync(recoveryParent, { recursive: true });
     if (existsSync(recoveryDirectory)) throw new Error('Recovery directory already exists');
     mkdirSync(recoveryDirectory, { recursive: false });
+    recoveryDirectoryCreated = true;
     const moves = ['', '-wal', '-shm']
       .map((suffix) => ({
         current: `${target}${suffix}`,
@@ -186,8 +196,15 @@ export function restoreLanPilotBackup({
       if (rollbackErrors.length > 0) throw new AggregateError([error, ...rollbackErrors], 'Restore failed and live-file rollback was incomplete');
       throw error;
     }
+    restoreCompleted = true;
     return { databasePath: target, recoveryDirectory, manifest };
   } finally {
     cleanupTemporaryDatabaseFiles(temporary);
+    if (!restoreCompleted && recoveryDirectoryCreated && recoveryDirectory && existsSync(recoveryDirectory)) {
+      try { rmdirSync(recoveryDirectory); } catch { /* Preserve non-empty or otherwise recoverable content. */ }
+    }
+    if (!restoreCompleted && !recoveryParentExisted && recoveryParent && existsSync(recoveryParent)) {
+      try { rmdirSync(recoveryParent); } catch { /* Preserve pre-existing or non-empty recovery content. */ }
+    }
   }
 }
