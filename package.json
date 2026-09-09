@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "devDependencies": {
+    "@playwright/test": "1.62.1",
     "acorn": "8.18.0"
   },
   "engines": {
@@ -11,7 +12,10 @@
   },
   "scripts": {
     "lint": "node scripts/verify-baseline.mjs lint",
-    "test": "node --test",
-    "build": "node scripts/verify-baseline.mjs build"
+    "test": "node --test \"tests/**/*.test.mjs\" \"tests/*.test.js\"",
+    "test:e2e": "playwright test",
+    "build": "node scripts/verify-baseline.mjs build",
+    "pilot:admin": "node scripts/lan-pilot-admin.mjs",
+    "pilot:lan:test": "node scripts/start-lan-pilot-test.mjs"
   }
 }

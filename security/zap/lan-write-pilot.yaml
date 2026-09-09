@@ -1,0 +1,41 @@
+env:
+  contexts:
+    - name: phase-a-loopback
+      urls:
+        - ${DASHBOARD_ZAP_BASE_URL}
+      includePaths:
+        - ${DASHBOARD_ZAP_BASE_URL}/lan-pilot/.*
+        - ${DASHBOARD_ZAP_BASE_URL}/api/health
+        - ${DASHBOARD_ZAP_BASE_URL}/api/session
+        - ${DASHBOARD_ZAP_BASE_URL}/api/customers.*
+        - ${DASHBOARD_ZAP_BASE_URL}/api/inquiries.*
+      excludePaths:
+        - .*logout.*
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: false
+jobs:
+  - type: requestor
+    parameters:
+      user: null
+    requests:
+      - url: ${DASHBOARD_ZAP_BASE_URL}/lan-pilot/
+        method: GET
+      - url: ${DASHBOARD_ZAP_BASE_URL}/lan-pilot/lan-pilot.css
+        method: GET
+      - url: ${DASHBOARD_ZAP_BASE_URL}/lan-pilot/lan-pilot.js
+        method: GET
+      - url: ${DASHBOARD_ZAP_BASE_URL}/api/health
+        method: GET
+      - url: ${DASHBOARD_ZAP_BASE_URL}/api/session
+        method: GET
+      - url: ${DASHBOARD_ZAP_BASE_URL}/api/customers
+        method: GET
+      - url: ${DASHBOARD_ZAP_BASE_URL}/api/inquiries
+        method: GET
+      - url: ${DASHBOARD_ZAP_BASE_URL}/api/inquiries/synthetic-missing/items
+        method: GET
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 2

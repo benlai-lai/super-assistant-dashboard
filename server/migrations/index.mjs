@@ -27,6 +27,11 @@ const REGISTRY = Object.freeze([
     name: 'approver-projection-foundation',
     sqlUrl: new URL('./003-approver-projection-foundation.sql', import.meta.url),
   }),
+  Object.freeze({
+    version: 4,
+    name: 'lan-write-pilot-foundation',
+    sqlUrl: new URL('./004-lan-write-pilot.sql', import.meta.url),
+  }),
 ]);
 
 function checksum(sql) {

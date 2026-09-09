@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 /**
  * In-memory session store for Phase 2C-A.
  * Stores hashed session tokens, not raw tokens.
- * Session: { actorId, role, expiresAt }
+ * Session: { actorId, role, expiresAt, sessionEpoch? }
  */
 class SessionStore {
   constructor() {
@@ -27,9 +27,11 @@ class SessionStore {
    * @param {string} role - 'editor' or 'viewer'
    * @param {number} expiresAt - Unix timestamp (ms) when session expires
    */
-  create(token, actorId, role, expiresAt) {
+  create(token, actorId, role, expiresAt, metadata = {}) {
     const hash = SessionStore.hashToken(token);
-    this.sessions.set(hash, { actorId, role, expiresAt });
+    const session = { actorId, role, expiresAt };
+    if (metadata.sessionEpoch !== undefined) session.sessionEpoch = metadata.sessionEpoch;
+    this.sessions.set(hash, session);
   }
 
   /**
