@@ -863,6 +863,62 @@ test('HTTP Server - Login rate limiting after multiple failed attempts', async (
   }
 });
 
+test('HTTP Server - successful logins do not clear shared-IP failed-login protection', async () => {
+  const firstPassword = 'first-editor-secure-password-123';
+  const firstSalt = randomBytes(16);
+  const firstHash = (await scryptAsync(firstPassword, firstSalt, 32)).toString('hex');
+  const secondPassword = 'second-editor-secure-password-456';
+  const secondSalt = randomBytes(16);
+  const secondHash = (await scryptAsync(secondPassword, secondSalt, 32)).toString('hex');
+  const server = createHttpServer({
+    port: 0,
+    host: '127.0.0.1',
+    maxLoginAttempts: 3,
+    credentials: {
+      'editor-1': {
+        username: 'first@example.com',
+        passwordHash: firstHash,
+        salt: firstSalt.toString('hex'),
+        role: 'editor',
+      },
+      'editor-2': {
+        username: 'second@example.com',
+        passwordHash: secondHash,
+        salt: secondSalt.toString('hex'),
+        role: 'editor',
+      },
+    },
+  });
+  await server.listen();
+  const { port } = server.server.address();
+  const attemptLogin = (username, password) => requestRawHttpResponse({
+    port,
+    method: 'POST',
+    path: '/api/session',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  try {
+    const failedStatuses = [];
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const failed = await attemptLogin('first@example.com', `wrong-password-${attempt}`);
+      failedStatuses.push(failed.status);
+
+      if (attempt < 2) {
+        const successful = await attemptLogin('second@example.com', secondPassword);
+        assert.equal(successful.status, 200, 'normal logins remain available before the shared failure limit');
+      }
+    }
+    assert.deepEqual(failedStatuses, [401, 401, 401]);
+
+    const limited = await attemptLogin('second@example.com', secondPassword);
+    assert.equal(limited.status, 429, 'successful logins for another account must not clear shared-IP failures');
+    assert.equal(JSON.parse(limited.body).error, 'Too many login attempts');
+  } finally {
+    await server.close();
+  }
+});
+
 test('HTTP Server - Different actors have different roles', async () => {
   const editorPassword = 'editor-password-123';
   const editorSalt = randomBytes(16);

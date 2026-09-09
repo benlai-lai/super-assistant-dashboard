@@ -114,6 +114,13 @@ class RateLimiter {
     }
   }
 
+  isBlocked(key) {
+    const now = Date.now();
+    this.cleanupExpired(now);
+    const record = this.attempts.get(key);
+    return Boolean(record && record.attempts >= this.maxAttempts);
+  }
+
   reset(ip) {
     this.attempts.delete(ip);
   }
@@ -130,6 +137,11 @@ export class HttpServer {
     this.secureCookies = options.secureCookies === true;
     this.createNetworkServer = options.createNetworkServer || ((handler) => createServer(handler));
     this.rateLimiter = new RateLimiter(
+      options.maxLoginAttempts || 5,
+      options.rateLimitWindowMs || 15 * 60 * 1000,
+      options.maxRateLimitEntries || 1000,
+    );
+    this.loginFailureLimiter = new RateLimiter(
       options.maxLoginAttempts || 5,
       options.rateLimitWindowMs || 15 * 60 * 1000,
       options.maxRateLimitEntries || 1000,
@@ -310,7 +322,7 @@ export class HttpServer {
       const clientIp = this.getClientIp(req);
 
       // Rate limiting
-      if (this.rateLimiter.isLimited(clientIp)) {
+      if (this.rateLimiter.isLimited(clientIp) || this.loginFailureLimiter.isBlocked(clientIp)) {
         res.writeHead(429, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Too many login attempts' }));
         return;
@@ -320,6 +332,7 @@ export class HttpServer {
       const { username, password } = body;
 
       if (!username || !password) {
+        this.loginFailureLimiter.isLimited(clientIp);
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Invalid credentials' }));
         return;
@@ -330,6 +343,7 @@ export class HttpServer {
 
       const actor = await this.credentialManager.authenticate(username, password);
       if (!actor) {
+        this.loginFailureLimiter.isLimited(clientIp);
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(genericError));
         return;
@@ -347,7 +361,8 @@ export class HttpServer {
       // Set cookie
       this.setSessionCookie(res, token, expiresAt);
 
-      // Reset rate limit on successful login
+      // A successful account login may reset the general attempt burst, but it
+      // must not clear the shared-IP history of failed login attempts.
       this.rateLimiter.reset(clientIp);
 
       res.writeHead(200, { 'Content-Type': 'application/json' });

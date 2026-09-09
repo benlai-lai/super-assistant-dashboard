@@ -14,6 +14,7 @@
     item: null,
   };
   const pendingKeys = new Map();
+  const viewRequestGeneration = { items: 0, audit: 0 };
   class RequestError extends Error { constructor(status, code) { super(code); this.status = status; this.code = code; } }
   function assertPilotResponse(response) {
     if (response.headers.get(PILOT_HEADER) !== PILOT_HEADER_VALUE) {
@@ -47,6 +48,12 @@
   const finishKey = (name) => pendingKeys.delete(name);
   const text = (id, value) => { byId(id).textContent = value ?? ''; };
   const clear = (element) => element.replaceChildren();
+  const beginViewRequest = (name) => ++viewRequestGeneration[name];
+  const invalidateViewRequests = () => {
+    viewRequestGeneration.items += 1;
+    viewRequestGeneration.audit += 1;
+  };
+  const isCurrentViewRequest = (name, generation) => state.session !== null && viewRequestGeneration[name] === generation;
   const setBusy = (form, value) => { for (const control of form.elements) control.disabled = value; };
   const setLoginBusy = (value) => {
     for (const control of byId('login-controls').querySelectorAll('input, button')) control.disabled = value;
@@ -56,7 +63,7 @@
     button.type = 'button'; button.textContent = label; button.setAttribute('aria-current', String(selected)); button.addEventListener('click', handler); li.append(button); return li;
   }
   function resetCustomerForm() { state.customer = null; byId('customer-form').reset(); byId('customer-id').value = ''; byId('customer-version').value = ''; }
-  function resetInquiryForm() { state.inquiry = null; byId('inquiry-form').reset(); byId('inquiry-id').value = ''; byId('inquiry-version').value = ''; state.items = []; renderItems(); resetItemForm(); text('selected-inquiry', '請先選擇詢價'); }
+  function resetInquiryForm() { invalidateViewRequests(); state.inquiry = null; byId('inquiry-form').reset(); byId('inquiry-id').value = ''; byId('inquiry-version').value = ''; state.items = []; renderItems(); resetItemForm(); text('selected-inquiry', '請先選擇詢價'); }
   function resetItemForm() { state.item = null; byId('item-form').reset(); byId('item-id').value = ''; byId('item-version').value = ''; }
   function editCustomer(customer) {
     state.customer = customer; byId('customer-id').value = customer.id; byId('customer-version').value = customer.row_version;
@@ -76,11 +83,32 @@
   function renderItems() { const list = byId('item-list'); clear(list); for (const item of state.items) list.append(recordButton(`${item.description} × ${item.quantity}`, state.item?.id === item.id, () => editItem(item))); }
   async function loadCustomers() { const payload = await api('/api/customers?limit=100'); state.customers = payload.customers; renderCustomers(); if (state.customer) { const latest = state.customers.find((item) => item.id === state.customer.id); if (latest) editCustomer(latest); } }
   async function loadInquiries() { if (!state.customer) return; const payload = await api('/api/inquiries?limit=100'); state.inquiries = payload.inquiries.filter((item) => item.customer_id === state.customer.id); renderInquiries(); }
-  async function loadItems() { if (!state.inquiry) return; const payload = await api(`/api/inquiries/${encodeURIComponent(state.inquiry.id)}/items`); state.items = payload.items; renderItems(); }
+  async function loadItems() {
+    if (!state.inquiry) return;
+    const inquiryId = state.inquiry.id;
+    const generation = beginViewRequest('items');
+    try {
+      const payload = await api(`/api/inquiries/${encodeURIComponent(inquiryId)}/items`);
+      if (!isCurrentViewRequest('items', generation) || state.inquiry?.id !== inquiryId) return;
+      state.items = payload.items;
+      renderItems();
+    } catch (error) {
+      if (!isCurrentViewRequest('items', generation) || state.inquiry?.id !== inquiryId) return;
+      throw error;
+    }
+  }
   async function loadAudit(entityType, entityId) {
+    const generation = beginViewRequest('audit');
     const list = byId('audit-list'); clear(list); text('audit-status', '載入中…');
-    try { const payload = await api(`/api/audit?entityType=${encodeURIComponent(entityType)}&entityId=${encodeURIComponent(entityId)}`); for (const entry of payload.entries) { const li = document.createElement('li'); li.textContent = `${entry.created_at} · ${entry.actor_id ?? 'legacy'} · ${entry.action}`; list.append(li); } text('audit-status', payload.entries.length ? '' : '尚無修改紀錄'); }
-    catch { text('audit-status', '修改紀錄載入失敗'); }
+    try {
+      const payload = await api(`/api/audit?entityType=${encodeURIComponent(entityType)}&entityId=${encodeURIComponent(entityId)}`);
+      if (!isCurrentViewRequest('audit', generation)) return;
+      for (const entry of payload.entries) { const li = document.createElement('li'); li.textContent = `${entry.created_at} · ${entry.actor_id ?? 'legacy'} · ${entry.action}`; list.append(li); }
+      text('audit-status', payload.entries.length ? '' : '尚無修改紀錄');
+    } catch {
+      if (!isCurrentViewRequest('audit', generation)) return;
+      text('audit-status', '修改紀錄載入失敗');
+    }
   }
   async function submitMutation(form, name, path, method, body, version, statusId) {
     setBusy(form, true); text(statusId, '儲存中…'); const key = keyFor(name, { path, method, body, version });
@@ -123,7 +151,20 @@
     event.preventDefault();
     byId('login-button').click();
   });
-  byId('logout').addEventListener('click', async () => { try { await api('/api/session', { method: 'DELETE' }); } catch { /* Clear the local view regardless. */ } location.reload(); });
+  byId('logout').addEventListener('click', async () => {
+    invalidateViewRequests();
+    state.session = null;
+    state.customers = [];
+    state.inquiries = [];
+    state.items = [];
+    state.customer = null;
+    state.inquiry = null;
+    state.item = null;
+    renderCustomers(); renderInquiries(); renderItems();
+    clear(byId('audit-list')); text('audit-status', '');
+    try { await api('/api/session', { method: 'DELETE' }); } catch { /* Clear the local view regardless. */ }
+    location.reload();
+  });
   byId('new-customer').addEventListener('click', resetCustomerForm); byId('new-inquiry').addEventListener('click', resetInquiryForm); byId('new-item').addEventListener('click', resetItemForm);
   byId('customer-form').addEventListener('submit', async (event) => {
     event.preventDefault(); const form = event.currentTarget; const body = { displayName: byId('customer-name').value, contactName: byId('customer-contact').value || null, email: byId('customer-email').value || null, phone: byId('customer-phone').value || null };

@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLanWritePilot } from '../../server/lan-write-pilot.mjs';
+import { createCustomerRepository } from '../../server/customer-repository.mjs';
+import { createInquiryRepository } from '../../server/inquiry-repository.mjs';
 
 const parent = process.env.DASHBOARD_PHASE_A_TEST_ROOT || tmpdir();
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -25,6 +27,18 @@ async function login(page, index) {
   await page.getByLabel('密碼').fill(passwords[index - 1]);
   await page.getByRole('button', { name: '登入' }).click();
   await expect(page.locator('#session-summary')).toContainText(`pilot-editor-${index}`);
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => { resolve = resolvePromise; });
+  return { promise, resolve };
+}
+
+async function fulfillPilotJson(route, payload, { pilotHeader = true } = {}) {
+  const headers = { 'Content-Type': 'application/json; charset=utf-8' };
+  if (pilotHeader) headers['X-Dashboard-Lan-Pilot'] = 'phase-a';
+  await route.fulfill({ status: 200, headers, body: JSON.stringify(payload) });
 }
 
 test.beforeAll(async () => {
@@ -135,6 +149,180 @@ test('three isolated browser sessions share CRUD, surface stale edits, persist a
     await restartContext.close();
   } finally {
     for (const context of contexts) await context.close().catch(() => {});
+  }
+});
+
+test('out-of-order item and audit responses cannot replace a newer selection or a logged-out view', async ({ browser }) => {
+  const timestamp = '2026-09-09T12:00:00.000Z';
+  const customers = createCustomerRepository(pilot.db);
+  const inquiries = createInquiryRepository(pilot.db);
+  customers.create({ id: 'race-customer', displayName: '競態測試客戶', createdAt: timestamp });
+  inquiries.create({
+    id: 'race-inquiry-a',
+    customerId: 'race-customer',
+    title: '競態詢價 A',
+    status: 'draft',
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+  inquiries.create({
+    id: 'race-inquiry-b',
+    customerId: 'race-customer',
+    title: '競態詢價 B',
+    status: 'draft',
+    createdAt: '2026-09-09T12:00:01.000Z',
+    updatedAt: '2026-09-09T12:00:01.000Z',
+  });
+
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const runtimeErrors = [];
+  page.on('console', (message) => {
+    if (['error', 'warning'].includes(message.type())) runtimeErrors.push(message.text());
+  });
+  page.on('pageerror', (error) => runtimeErrors.push(error.message));
+
+  let itemScenario = null;
+  let auditScenario = null;
+  await page.route('**/api/inquiries/*/items', async (route) => {
+    const inquiryId = decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-2));
+    if (!itemScenario) return route.continue();
+    return itemScenario(route, inquiryId);
+  });
+  await page.route('**/api/audit?*', async (route) => {
+    const url = new URL(route.request().url());
+    if (!auditScenario) return route.continue();
+    return auditScenario(route, url.searchParams.get('entityType'), url.searchParams.get('entityId'));
+  });
+
+  try {
+    await login(page, 1);
+    await page.getByRole('button', { name: '競態測試客戶' }).click();
+    await expect(page.getByRole('button', { name: /競態詢價 A/ })).toBeVisible();
+
+    const aToBStarted = deferred();
+    const releaseAToB = deferred();
+    itemScenario = async (route, inquiryId) => {
+      if (inquiryId === 'race-inquiry-a') {
+        aToBStarted.resolve();
+        await releaseAToB.promise;
+        return fulfillPilotJson(route, { items: [{ id: 'stale-a-to-b', description: '過期 A→B', quantity: 1 }] });
+      }
+      return fulfillPilotJson(route, { items: [{ id: 'current-b', description: '目前 B', quantity: 1 }] });
+    };
+    await page.getByRole('button', { name: /競態詢價 A/ }).click();
+    await aToBStarted.promise;
+    await page.getByRole('button', { name: /競態詢價 B/ }).click();
+    await expect(page.locator('#item-list')).toContainText('目前 B');
+    releaseAToB.resolve();
+    await page.waitForTimeout(50);
+    await expect(page.locator('#item-list')).toContainText('目前 B');
+    await expect(page.locator('#item-list')).not.toContainText('過期 A→B');
+
+    const aToBToAStarted = deferred();
+    const releaseAToBToA = deferred();
+    let aRequestCount = 0;
+    itemScenario = async (route, inquiryId) => {
+      if (inquiryId === 'race-inquiry-a' && aRequestCount++ === 0) {
+        aToBToAStarted.resolve();
+        await releaseAToBToA.promise;
+        return fulfillPilotJson(route, { items: [{ id: 'stale-a-cycle', description: '過期 A 循環', quantity: 1 }] });
+      }
+      const description = inquiryId === 'race-inquiry-a' ? '目前 A 循環' : '目前 B 循環';
+      return fulfillPilotJson(route, { items: [{ id: `current-${inquiryId}`, description, quantity: 1 }] });
+    };
+    await page.getByRole('button', { name: /競態詢價 A/ }).click();
+    await aToBToAStarted.promise;
+    await page.getByRole('button', { name: /競態詢價 B/ }).click();
+    await expect(page.locator('#item-list')).toContainText('目前 B 循環');
+    await page.getByRole('button', { name: /競態詢價 A/ }).click();
+    await expect(page.locator('#item-list')).toContainText('目前 A 循環');
+    releaseAToBToA.resolve();
+    await page.waitForTimeout(50);
+    await expect(page.locator('#item-list')).toContainText('目前 A 循環');
+    await expect(page.locator('#item-list')).not.toContainText('過期 A 循環');
+
+    const auditStarted = deferred();
+    const releaseAudit = deferred();
+    auditScenario = async (route, entityType, entityId) => {
+      if (entityType === 'inquiry' && entityId === 'race-inquiry-a') {
+        auditStarted.resolve();
+        await releaseAudit.promise;
+        return fulfillPilotJson(route, { entries: [{ created_at: timestamp, actor_id: 'pilot-editor-1', action: '過期稽核' }] });
+      }
+      return fulfillPilotJson(route, { entries: [{ created_at: timestamp, actor_id: 'pilot-editor-1', action: '目前稽核' }] });
+    };
+    await page.getByRole('button', { name: /競態詢價 A/ }).click();
+    await auditStarted.promise;
+    await page.getByRole('button', { name: /競態詢價 B/ }).click();
+    await expect(page.locator('#audit-list')).toContainText('目前稽核');
+    releaseAudit.resolve();
+    await page.waitForTimeout(50);
+    await expect(page.locator('#audit-list')).toContainText('目前稽核');
+    await expect(page.locator('#audit-list')).not.toContainText('過期稽核');
+
+    const staleErrorStarted = deferred();
+    const releaseStaleError = deferred();
+    itemScenario = async (route, inquiryId) => {
+      if (inquiryId === 'race-inquiry-a') {
+        staleErrorStarted.resolve();
+        await releaseStaleError.promise;
+        return fulfillPilotJson(route, {}, { pilotHeader: false });
+      }
+      return fulfillPilotJson(route, { items: [{ id: 'current-after-error', description: '錯誤後仍為 B', quantity: 1 }] });
+    };
+    auditScenario = async (route) => fulfillPilotJson(route, { entries: [] });
+    await page.getByRole('button', { name: /競態詢價 A/ }).click();
+    await staleErrorStarted.promise;
+    await page.getByRole('button', { name: /競態詢價 B/ }).click();
+    await expect(page.locator('#item-list')).toContainText('錯誤後仍為 B');
+    releaseStaleError.resolve();
+    await page.waitForTimeout(50);
+    await expect(page.locator('#item-list')).toContainText('錯誤後仍為 B');
+
+    const logoutItemsStarted = deferred();
+    const logoutAuditStarted = deferred();
+    const releaseLogoutItems = deferred();
+    const releaseLogoutAudit = deferred();
+    const logoutStarted = deferred();
+    const releaseLogout = deferred();
+    itemScenario = async (route, inquiryId) => {
+      if (inquiryId === 'race-inquiry-a') {
+        logoutItemsStarted.resolve();
+        await releaseLogoutItems.promise;
+        return fulfillPilotJson(route, { items: [{ id: 'stale-after-logout', description: '登出後過期資料', quantity: 1 }] });
+      }
+      return fulfillPilotJson(route, { items: [] });
+    };
+    auditScenario = async (route, entityType, entityId) => {
+      if (entityType === 'inquiry' && entityId === 'race-inquiry-a') {
+        logoutAuditStarted.resolve();
+        await releaseLogoutAudit.promise;
+        return fulfillPilotJson(route, {}, { pilotHeader: false });
+      }
+      return fulfillPilotJson(route, { entries: [] });
+    };
+    await page.route('**/api/session', async (route) => {
+      if (route.request().method() !== 'DELETE') return route.continue();
+      logoutStarted.resolve();
+      await releaseLogout.promise;
+      return route.continue();
+    });
+    await page.getByRole('button', { name: /競態詢價 A/ }).click();
+    await Promise.all([logoutItemsStarted.promise, logoutAuditStarted.promise]);
+    await page.getByRole('button', { name: '登出' }).click();
+    await logoutStarted.promise;
+    releaseLogoutItems.resolve();
+    releaseLogoutAudit.resolve();
+    await page.waitForTimeout(50);
+    await expect(page.locator('#item-list')).not.toContainText('登出後過期資料');
+    await expect(page.locator('#audit-status')).not.toHaveText('修改紀錄載入失敗');
+    releaseLogout.resolve();
+    await expect(page.locator('#login-panel')).toBeVisible();
+
+    expect(runtimeErrors).toEqual([]);
+  } finally {
+    await context.close();
   }
 });
 
