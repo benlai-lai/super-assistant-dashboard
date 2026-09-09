@@ -127,8 +127,8 @@ export function createCustomerInquiryApi({ customers, inquiries, getSession, par
         const { session, input } = await body(req, 'update');
         rejectUnknown(input, new Set(['displayName', 'contactName', 'email', 'phone']));
         if (Object.keys(input).length === 0) throw new ApiError(400, 'Invalid request body');
-        for (const value of Object.values(input)) {
-          if (value !== null) requireNonEmptyString(value, 254);
+        for (const [field, value] of Object.entries(input)) {
+          if (value !== null) requireNonEmptyString(value, field === 'email' ? 254 : 120);
         }
         if (writeService) {
           const result = writeService.updateCustomer({ session, key: idempotencyKey(req), id, expectedVersion: expectedVersion(req), input });

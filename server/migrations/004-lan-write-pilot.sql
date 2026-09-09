@@ -33,7 +33,7 @@ CREATE TABLE idempotency_requests (
   response_status INTEGER NOT NULL CHECK (response_status BETWEEN 200 AND 299),
   response_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  PRIMARY KEY (actor_id, operation, idempotency_key),
+  PRIMARY KEY (actor_id, idempotency_key),
   FOREIGN KEY (actor_id) REFERENCES accounts(id) ON UPDATE RESTRICT ON DELETE RESTRICT
 );
 

@@ -12,7 +12,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { assertPilotDataPath } from './lan-write-pilot.mjs';
-import { getSchemaVersion } from './database.mjs';
+import { validateRegisteredDatabase } from './migrations/index.mjs';
 
 function sha256(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
@@ -31,10 +31,7 @@ function validateSnapshot(path) {
   try {
     const integrity = db.prepare('PRAGMA integrity_check').all().map((row) => Object.values(row)[0]);
     if (integrity.length !== 1 || integrity[0] !== 'ok') throw new Error('Backup integrity check failed');
-    const schemaVersion = getSchemaVersion(db);
-    const migrations = db.prepare('SELECT version, name, checksum FROM schema_migrations ORDER BY version').all();
-    if (String(migrations.at(-1)?.version) !== schemaVersion) throw new Error('Backup migration ledger is inconsistent');
-    return { schemaVersion, migrations };
+    return validateRegisteredDatabase(db);
   } finally {
     db.close();
   }
@@ -109,7 +106,12 @@ export function restoreLanPilotBackup({
   if (source === target || manifestFile === target) throw new Error('Backup source must differ from the live database');
   if (!existsSync(source) || !existsSync(manifestFile)) throw new Error('Backup or manifest is missing');
   const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
-  if (manifest.format !== 'super-assistant-dashboard.sqlite-backup.v1' || manifest.sha256 !== sha256(source)) {
+  if (
+    manifest.format !== 'super-assistant-dashboard.sqlite-backup.v1'
+    || manifest.sha256 !== sha256(source)
+    || !Number.isSafeInteger(manifest.bytes)
+    || manifest.bytes !== statSync(source).size
+  ) {
     throw new Error('Backup manifest verification failed');
   }
   const sourceWal = `${source}-wal`;
@@ -123,14 +125,32 @@ export function restoreLanPilotBackup({
   } finally {
     cleanupDatabaseSidecars(source);
   }
-  if (validation.schemaVersion !== manifest.schemaVersion) throw new Error('Backup schema version does not match manifest');
+  const expectedMigrationVersions = validation.migrations.map((entry) => entry.version);
+  if (
+    validation.schemaVersion !== manifest.schemaVersion
+    || !Array.isArray(manifest.migrationVersions)
+    || manifest.migrationVersions.length !== expectedMigrationVersions.length
+    || manifest.migrationVersions.some((version, index) => version !== expectedMigrationVersions[index])
+  ) {
+    throw new Error('Backup schema or migration registry does not match manifest');
+  }
 
   mkdirSync(dirname(target), { recursive: true });
   const temporary = assertPilotDataPath(`${target}.restore-${randomUUID()}.tmp`, allowedRoot);
   copyFileSync(source, temporary);
   try {
     if (sha256(temporary) !== manifest.sha256) throw new Error('Restored copy checksum mismatch');
-    validateSnapshot(temporary);
+    const restoredValidation = validateSnapshot(temporary);
+    if (
+      restoredValidation.schemaVersion !== validation.schemaVersion
+      || restoredValidation.migrations.some((entry, index) => (
+        entry.version !== validation.migrations[index]?.version
+        || entry.name !== validation.migrations[index]?.name
+        || entry.checksum !== validation.migrations[index]?.checksum
+      ))
+    ) {
+      throw new Error('Restored copy schema validation mismatch');
+    }
 
     const recoveryDirectory = assertPilotDataPath(
       resolve(dirname(target), 'recovery', now().replace(/[:.]/g, '-')),

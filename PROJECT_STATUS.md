@@ -16,11 +16,11 @@
 
 ## LAN write pilot Phase A（隔離施工中）
 
-- `codex/dashboard-lan-write-pilot-phase-a` 以 `main` / `16377195e52dfb0ceb588a5ec4b4c88b3cc8de3b` 為基準，已有未提交的 Phase A 實作；尚未 commit、push、PR、merge 或部署。
+- `codex/dashboard-lan-write-pilot-phase-a` 以 `main` / `16377195e52dfb0ceb588a5ec4b4c88b3cc8de3b` 為基準，Phase A 實作已建立 PR #25；本次安全修正已有尚未 push 的本機 commit，PR 尚未設為 Ready、merge 或部署。
 - 隔離測試根目錄位於 Git、Pages 與 OneDrive 外；已建立 schema v4 的持久化合成 SQLite DB、3 個 editor 帳號，以及 customer／inquiry／`inquiry_items` 合成資料。帳號停用與密碼重設會在下一個受保護請求使既有 session 失效。
 - 已實作 loopback-only 明文測試入口、共享讀寫 UI、If-Match 衝突、冪等收據、append-only audit、WAL-aware backup 與 offline restore；未開放刪除、報價、核准、PDF、附件或 LINE。
 - 目前 160 項 Node tests、69 個 JavaScript syntax checks、含新 UI 的隔離 build、npm audit（0 vulnerabilities）、1 項 Chromium Playwright 流程及實際 backup／restore rehearsal 通過。三個 browser context 只是單機隔離 session，不是三台實體電腦驗收。
-- 已從 Eclipse Adoptium 官方發行來源下載並以官方 SHA-256 核對可攜式 Temurin JRE 21.0.12.1，解壓於 Git／Pages／OneDrive 外的 Phase A 專用 tools 目錄，未修改全域 PATH。ZAP 2.17.0 Crossplatform 與 Core ZIP 均已從官方 GitHub Release 完整下載，但兩者在本機 checksum 階段都被 Windows Defender 判定為 `Program:Java/Multiverze!rfn`（Threat ID 453479、高嚴重性）並成功隔離；未停用防護、未加入排除，也未解壓或執行 ZAP。因此固定 8-request、anonymous、passive-only 計畫仍只有靜態邊界測試，Phase A 驗收維持 `PARTIAL`，不得解讀為完整認證、安全或 HTTPS 驗收。
+- 已從 Eclipse Adoptium 官方發行來源下載並以官方 SHA-256 核對可攜式 Temurin JRE 21.0.12.1，解壓於 Git／Pages／OneDrive 外的 Phase A 專用 tools 目錄，未修改全域 PATH。ZAP 2.17.0 Crossplatform 與 Core ZIP 均已從官方 GitHub Release 完整下載，但兩者在本機 checksum 階段都被 Windows Defender 判定為 `Program:Java/Multiverze!rfn`（Threat ID 453479、高嚴重性）並成功隔離；未停用防護、未加入排除，也未解壓或執行該批資產。其後已使用泰吉電腦既有的 ZAP 2.17.0 與 OpenJDK 17.0.20.1，對最新本機安全修正執行固定 8-request、anonymous、passive-only 計畫：8 個 request／8 個 URL、passive queue drained、High／Medium／Low 為 0、Info 1、外部請求 0，清理通過。此結果仍不得解讀為完整認證、主動掃描、TLS 或正式 LAN 安全驗收。
 - Phase B 尚未執行：未核對或修改 LAN 網卡／profile／固定 hostname、Windows Firewall、主機憑證、客戶端信任或 Windows service，也未進行跨實體電腦測試。
 
 ## 已完成並可由程式確認
@@ -83,7 +83,7 @@
 
 ## 下一個決策點
 
-C0-B 已合併並完成上述有限驗收與 Pages 發布核對。LAN write pilot Phase A 已授權並在隔離分支完成未提交施工；可攜式 Java 已準備完成，但 ZAP 2.17.0 Crossplatform 與 Core 官方 ZIP 都被 Windows Defender 隔離，固定 8-request 被動掃描尚未執行，最終驗收仍為 `PARTIAL`。下一個人類決定是由 Windows Security 管理者核對並明確允許該官方 ZAP 資產後補驗，或提供另一個已核准的 ZAP 2.17.0 執行環境；Phase B、正式環境、V1 資料覆蓋、訂單擴充及任何發布仍未授權。
+C0-B 已合併並完成上述有限驗收與 Pages 發布核對。LAN write pilot Phase A 已在隔離分支完成本機實作、安全修正 commit、真實 Playwright／Chromium 驗證與固定 8-request ZAP 2.17.0 passive-only 驗收；安全修正尚未 push，PR #25 仍不得設為 Ready、merge 或部署。下一個人類決定是是否授權將精確本機安全修正 commit 一般 push 至 PR #25 並重新核對遠端 CI／CodeQL；Phase B、正式環境、V1 資料覆蓋、訂單擴充及任何部署仍未授權。
 
 ## 詳細資料按需閱讀
 

@@ -1,5 +1,16 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -14,6 +25,10 @@ import { createCustomerInquiryWriteService } from '../server/customer-inquiry-wr
 import { createLanPilotBackup, restoreLanPilotBackup } from '../server/lan-maintenance.mjs';
 
 const testParent = process.env.DASHBOARD_PHASE_A_TEST_ROOT || tmpdir();
+
+function sha256(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
 
 test('backup and offline restore preserve WAL-committed business, account, audit, and idempotency state', { timeout: 30_000 }, async () => {
   const root = mkdtempSync(join(testParent, 'dashboard-lan-maintenance-'));
@@ -122,6 +137,74 @@ test('restore rolls back every moved live file and removes temporary sidecars af
     assert.equal(readdirSync(join(root, 'data')).some((name) => name.includes('.restore-')), false);
     assert.equal(existsSync(`${backupPath}-wal`), false);
     assert.equal(existsSync(`${backupPath}-shm`), false);
+  } finally {
+    db?.close();
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(existsSync(root), false);
+  }
+});
+
+test('restore rejects manifest drift and incompatible schema before moving live files', async () => {
+  const root = mkdtempSync(join(testParent, 'dashboard-lan-restore-validation-'));
+  const databasePath = join(root, 'data', 'pilot.sqlite3');
+  const backupPath = join(root, 'backups', 'snapshot.sqlite3');
+  mkdirSync(join(root, 'data'), { recursive: true });
+  let db = openPhase2bDatabase(databasePath);
+  try {
+    createCustomerRepository(db).create({
+      id: 'live-customer',
+      displayName: '保留的正式合成資料',
+      createdAt: '2026-09-08T03:00:00.000Z',
+    });
+    const result = await createLanPilotBackup({
+      db,
+      backupPath,
+      allowedRoot: root,
+      now: (() => {
+        const values = ['2026-09-08T03:01:00.000Z', '2026-09-08T03:02:00.000Z'];
+        return () => values.shift() ?? '2026-09-08T03:03:00.000Z';
+      })(),
+    });
+    db.close();
+    db = null;
+    const liveBytes = readFileSync(databasePath);
+    const originalManifest = JSON.parse(readFileSync(result.manifestPath, 'utf8'));
+
+    writeFileSync(result.manifestPath, `${JSON.stringify({ ...originalManifest, bytes: originalManifest.bytes + 1 }, null, 2)}\n`);
+    assert.throws(
+      () => restoreLanPilotBackup({ databasePath, backupPath, allowedRoot: root }),
+      /manifest verification failed/i,
+    );
+    assert.deepEqual(readFileSync(databasePath), liveBytes);
+    assert.equal(existsSync(join(root, 'data', 'recovery')), false);
+
+    writeFileSync(result.manifestPath, `${JSON.stringify({ ...originalManifest, migrationVersions: [1, 2, 3] }, null, 2)}\n`);
+    assert.throws(
+      () => restoreLanPilotBackup({ databasePath, backupPath, allowedRoot: root }),
+      /schema or migration registry does not match manifest/i,
+    );
+    assert.deepEqual(readFileSync(databasePath), liveBytes);
+    assert.equal(existsSync(join(root, 'data', 'recovery')), false);
+
+    const incompatible = new DatabaseSync(backupPath);
+    try {
+      incompatible.prepare('PRAGMA journal_mode = DELETE').get();
+      incompatible.exec('CREATE TABLE incompatible_extra_table (id TEXT PRIMARY KEY)');
+    } finally {
+      incompatible.close();
+    }
+    const incompatibleManifest = {
+      ...originalManifest,
+      sha256: sha256(backupPath),
+      bytes: statSync(backupPath).size,
+    };
+    writeFileSync(result.manifestPath, `${JSON.stringify(incompatibleManifest, null, 2)}\n`);
+    assert.throws(
+      () => restoreLanPilotBackup({ databasePath, backupPath, allowedRoot: root }),
+      /schema fingerprint mismatch/i,
+    );
+    assert.deepEqual(readFileSync(databasePath), liveBytes);
+    assert.equal(existsSync(join(root, 'data', 'recovery')), false);
   } finally {
     db?.close();
     rmSync(root, { recursive: true, force: true });

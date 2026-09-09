@@ -42,9 +42,11 @@ export function createCustomerInquiryWriteService({
     assertKey(key);
     const hash = requestHash(fingerprint);
     return runInTransaction(db, () => {
-      const existing = idempotency.get(session.actorId, operation, key);
+      const existing = idempotency.get(session.actorId, key);
       if (existing) {
-        if (existing.request_hash !== hash) throw conflict('idempotency_key_reused');
+        if (existing.operation !== operation || existing.request_hash !== hash) {
+          throw conflict('idempotency_key_reused');
+        }
         return { status: existing.response_status, body: existing.response, replayed: true };
       }
 

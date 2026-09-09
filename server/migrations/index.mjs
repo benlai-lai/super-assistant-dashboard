@@ -290,6 +290,20 @@ export function loadRegisteredMigrations() {
   return materializeMigrations(REGISTRY);
 }
 
+export function validateRegisteredDatabase(db, { requireLatest = true } = {}) {
+  if (!db || typeof db.prepare !== 'function') throw new Error('A SQLite database is required');
+  const migrations = materializeMigrations(REGISTRY);
+  const current = validateAppliedState(db, migrations);
+  const latest = migrations.at(-1).version;
+  if (requireLatest && current !== latest) {
+    throw new Error('Database schema version is not the latest registered version');
+  }
+  return {
+    schemaVersion: String(current),
+    migrations: migrations.slice(0, current).map(({ version, name, checksum }) => ({ version, name, checksum })),
+  };
+}
+
 export function migrateDatabase(db, { migrations: suppliedMigrations, now = () => new Date().toISOString() } = {}) {
   if (!db || typeof db.prepare !== 'function' || typeof db.exec !== 'function') throw new Error('A SQLite database is required');
   if (db.prepare('PRAGMA foreign_keys').get().foreign_keys !== 1) throw new Error('SQLite foreign_keys must be enabled before migration');

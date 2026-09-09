@@ -1,15 +1,40 @@
 (() => {
   'use strict';
   const byId = (id) => document.getElementById(id);
-  const state = { session: null, customers: [], inquiries: [], items: [], customer: null, inquiry: null, item: null };
+  const PILOT_HEADER = 'x-dashboard-lan-pilot';
+  const PILOT_HEADER_VALUE = 'phase-a';
+  const state = {
+    pilotReady: false,
+    session: null,
+    customers: [],
+    inquiries: [],
+    items: [],
+    customer: null,
+    inquiry: null,
+    item: null,
+  };
   const pendingKeys = new Map();
   class RequestError extends Error { constructor(status, code) { super(code); this.status = status; this.code = code; } }
+  function assertPilotResponse(response) {
+    if (response.headers.get(PILOT_HEADER) !== PILOT_HEADER_VALUE) {
+      throw new RequestError(503, 'pilot_unavailable');
+    }
+  }
   async function api(path, { method = 'GET', body, version, mutationKey } = {}) {
+    if (!state.pilotReady) throw new RequestError(503, 'pilot_unavailable');
     const headers = { Accept: 'application/json' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (mutationKey) headers['Idempotency-Key'] = mutationKey;
     if (version) headers['If-Match'] = `"${version}"`;
-    const response = await fetch(path, { method, headers, credentials: 'same-origin', body: body === undefined ? undefined : JSON.stringify(body) });
+    const response = await fetch(path, {
+      method,
+      headers,
+      credentials: 'same-origin',
+      cache: 'no-store',
+      redirect: 'error',
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    assertPilotResponse(response);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new RequestError(response.status, payload.error || 'request_failed');
     return payload;
@@ -23,6 +48,9 @@
   const text = (id, value) => { byId(id).textContent = value ?? ''; };
   const clear = (element) => element.replaceChildren();
   const setBusy = (form, value) => { for (const control of form.elements) control.disabled = value; };
+  const setLoginBusy = (value) => {
+    for (const control of byId('login-controls').querySelectorAll('input, button')) control.disabled = value;
+  };
   function recordButton(label, selected, handler) {
     const li = document.createElement('li'); const button = document.createElement('button');
     button.type = 'button'; button.textContent = label; button.setAttribute('aria-current', String(selected)); button.addEventListener('click', handler); li.append(button); return li;
@@ -60,10 +88,40 @@
     catch (error) { text(statusId, error.code === 'stale_version' ? '資料已被其他人修改，已重新載入；請確認後再送出。' : `儲存失敗：${error.code}`); if (error.code === 'stale_version') finishKey(name); throw error; }
     finally { setBusy(form, false); }
   }
-  byId('login-form').addEventListener('submit', async (event) => {
-    event.preventDefault(); const form = event.currentTarget; setBusy(form, true); text('login-status', '登入中…');
-    try { await api('/api/session', { method: 'POST', body: { username: byId('username').value, password: byId('password').value } }); byId('password').value = ''; state.session = await api('/api/session'); byId('login-panel').hidden = true; byId('app-panel').hidden = false; byId('session-panel').hidden = false; text('session-summary', `${state.session.actorId} · ${state.session.role}`); await loadCustomers(); }
-    catch { byId('password').value = ''; text('login-status', '登入失敗'); } finally { setBusy(form, false); }
+  async function login() {
+    if (!state.pilotReady) {
+      text('login-status', '本頁未連接核准的本機服務，登入已停用。');
+      return;
+    }
+    const username = byId('username').value;
+    const password = byId('password').value;
+    if (!username || !password) {
+      text('login-status', '請輸入帳號與密碼');
+      return;
+    }
+    setLoginBusy(true);
+    text('login-status', '登入中…');
+    try {
+      await api('/api/session', { method: 'POST', body: { username, password } });
+      byId('password').value = '';
+      state.session = await api('/api/session');
+      byId('login-panel').hidden = true;
+      byId('app-panel').hidden = false;
+      byId('session-panel').hidden = false;
+      text('session-summary', `${state.session.actorId} · ${state.session.role}`);
+      await loadCustomers();
+    } catch {
+      byId('password').value = '';
+      text('login-status', '登入失敗');
+    } finally {
+      setLoginBusy(!state.pilotReady);
+    }
+  }
+  byId('login-button').addEventListener('click', login);
+  byId('login-controls').addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    byId('login-button').click();
   });
   byId('logout').addEventListener('click', async () => { try { await api('/api/session', { method: 'DELETE' }); } catch { /* Clear the local view regardless. */ } location.reload(); });
   byId('new-customer').addEventListener('click', resetCustomerForm); byId('new-inquiry').addEventListener('click', resetInquiryForm); byId('new-item').addEventListener('click', resetItemForm);
@@ -85,4 +143,16 @@
     try { const payload = await submitMutation(form, 'item', path, id ? 'PATCH' : 'POST', body, Number(byId('item-version').value) || undefined, 'item-status'); state.item = payload.item; await loadItems(); editItem(state.items.find((item) => item.id === state.item.id) ?? state.item); }
     catch (error) { if (error.code === 'stale_version') { await loadItems(); const latest = state.items.find((item) => item.id === id); if (latest) editItem(latest); } }
   });
+  function establishPilotConnection() {
+    setLoginBusy(true);
+    if (document.body.dataset.pilotRuntime !== PILOT_HEADER_VALUE) {
+      state.pilotReady = false;
+      text('login-status', '本頁未連接核准的本機服務，登入已停用。');
+      return;
+    }
+    state.pilotReady = true;
+    setLoginBusy(false);
+    text('login-status', '');
+  }
+  establishPilotConnection();
 })();

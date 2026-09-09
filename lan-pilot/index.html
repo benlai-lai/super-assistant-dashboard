@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dashboard LAN Write Pilot｜Phase A</title>
-  <link rel="stylesheet" href="/lan-pilot/lan-pilot.css">
+  <link rel="stylesheet" href="./lan-pilot.css">
 </head>
-<body>
+<body data-pilot-runtime="static">
   <header>
     <div><p class="eyebrow">PHASE A · LOOPBACK</p><h1>客戶與詢價協作試用</h1></div>
     <div id="session-panel" hidden><span id="session-summary"></span><button id="logout" type="button">登出</button></div>
@@ -14,12 +14,12 @@
   <main>
     <section id="login-panel" class="card narrow">
       <h2>登入測試帳號</h2>
-      <form id="login-form">
-        <label>帳號<input id="username" name="username" autocomplete="username" required></label>
-        <label>密碼<input id="password" name="password" type="password" autocomplete="current-password" required></label>
-        <button type="submit">登入</button>
-      </form>
-      <p id="login-status" class="status" role="status"></p>
+      <div id="login-controls">
+        <label>帳號<input id="username" autocomplete="username" required disabled></label>
+        <label>密碼<input id="password" type="password" autocomplete="current-password" required disabled></label>
+        <button id="login-button" type="button" disabled>登入</button>
+      </div>
+      <p id="login-status" class="status" role="status">正在確認核准的本機服務…</p>
     </section>
 
     <section id="app-panel" hidden>
@@ -70,6 +70,6 @@
       <section class="card"><h2>修改紀錄</h2><ul id="audit-list" class="audit-list" data-testid="audit-list"></ul><p id="audit-status" class="status" role="status"></p></section>
     </section>
   </main>
-  <script src="/lan-pilot/lan-pilot.js"></script>
+  <script src="./lan-pilot.js"></script>
 </body>
 </html>

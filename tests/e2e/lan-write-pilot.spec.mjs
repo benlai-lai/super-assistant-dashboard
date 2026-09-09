@@ -1,11 +1,14 @@
 import { expect, test } from '@playwright/test';
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createLanWritePilot } from '../../server/lan-write-pilot.mjs';
 
 const parent = process.env.DASHBOARD_PHASE_A_TEST_ROOT || tmpdir();
+const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 let root;
 let databasePath;
 let pilot;
@@ -132,5 +135,63 @@ test('three isolated browser sessions share CRUD, surface stale edits, persist a
     await restartContext.close();
   } finally {
     for (const context of contexts) await context.close().catch(() => {});
+  }
+});
+
+test('repository-subpath static publication keeps login inert without contacting an API', async ({ browser }) => {
+  const requests = [];
+  const server = createServer((req, res) => {
+    requests.push({ method: req.method, url: req.url });
+    const assets = new Map([
+      ['/super-assistant-dashboard/lan-pilot/', ['index.html', 'text/html; charset=utf-8']],
+      ['/super-assistant-dashboard/lan-pilot/lan-pilot.css', ['lan-pilot.css', 'text/css; charset=utf-8']],
+      ['/super-assistant-dashboard/lan-pilot/lan-pilot.js', ['lan-pilot.js', 'text/javascript; charset=utf-8']],
+    ]);
+    const asset = assets.get(req.url);
+    if (!asset) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Not Found' }));
+      return;
+    }
+    const body = readFileSync(join(projectRoot, 'lan-pilot', asset[0]));
+    res.writeHead(200, { 'Content-Type': asset[1], 'Content-Length': body.length });
+    res.end(body);
+  });
+  await new Promise((resolveListen, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolveListen);
+  });
+  const address = server.address();
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await context.newPage();
+  const runtimeErrors = [];
+  page.on('console', (message) => {
+    if (['error', 'warning'].includes(message.type())) runtimeErrors.push(message.text());
+  });
+  page.on('pageerror', (error) => runtimeErrors.push(error.message));
+  try {
+    await page.goto(`${baseUrl}/super-assistant-dashboard/lan-pilot/`);
+    await expect(page.locator('#login-button')).toBeDisabled();
+    await expect(page.locator('#username')).toBeDisabled();
+    await expect(page.locator('#password')).toBeDisabled();
+    await expect(page.locator('#login-status')).toHaveText('本頁未連接核准的本機服務，登入已停用。');
+    expect(await page.locator('#login-form').count()).toBe(0);
+    expect(await page.locator('#username').getAttribute('name')).toBeNull();
+    expect(await page.locator('#password').getAttribute('name')).toBeNull();
+    await page.locator('#login-button').dispatchEvent('click');
+    await page.waitForTimeout(50);
+    expect(requests).toHaveLength(3);
+    expect(requests.every((request) => request.method === 'GET')).toBe(true);
+    expect(new Set(requests.map((request) => request.url))).toEqual(new Set([
+      '/super-assistant-dashboard/lan-pilot/',
+      '/super-assistant-dashboard/lan-pilot/lan-pilot.css',
+      '/super-assistant-dashboard/lan-pilot/lan-pilot.js',
+    ]));
+    expect(runtimeErrors).toEqual([]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
+  } finally {
+    await context.close();
+    await new Promise((resolveClose, reject) => server.close((error) => (error ? reject(error) : resolveClose())));
   }
 });

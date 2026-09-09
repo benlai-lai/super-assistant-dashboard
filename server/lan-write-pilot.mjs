@@ -1,6 +1,6 @@
 import { createServer as createHttpsServer } from 'node:https';
-import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HttpServer } from './http-server.mjs';
 import { openPhase2bDatabase } from './database.mjs';
@@ -35,13 +35,63 @@ function canonicalPotentialPath(path) {
   return resolve(realpathSync(existing), relative(existing, path));
 }
 
+function existingAncestor(path) {
+  let current = resolve(path);
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) throw new Error('Pilot data path has no existing ancestor');
+    current = parent;
+  }
+  return current;
+}
+
+function assertNoSymbolicPathComponents(path) {
+  const absolute = resolve(path);
+  const root = parse(absolute).root;
+  let current = root;
+  const parts = absolute.slice(root.length).split(/[\\/]+/).filter(Boolean);
+  for (const part of parts) {
+    current = join(current, part);
+    if (!existsSync(current)) break;
+    if (lstatSync(current).isSymbolicLink()) {
+      throw new Error('Pilot data paths must not contain symlink, junction, or reparse components');
+    }
+  }
+}
+
+function isInsideGitWorktree(path) {
+  let current = existingAncestor(path);
+  if (!lstatSync(current).isDirectory()) current = dirname(current);
+  while (true) {
+    if (existsSync(join(current, '.git'))) return true;
+    const parent = dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
+
+function hasOneDriveSegment(path) {
+  return resolve(path).split(/[\\/]+/).some((part) => /^OneDrive(?:\s*-\s*.+)?$/i.test(part));
+}
+
 export function assertPilotDataPath(path, allowedRoot) {
   if (!isAbsolute(path) || !isAbsolute(allowedRoot)) throw new Error('Pilot data paths must be absolute');
   if (!existsSync(allowedRoot)) throw new Error('Dedicated pilot data root must already exist');
+  const requestedRoot = resolve(allowedRoot);
+  if (requestedRoot === parse(requestedRoot).root) throw new Error('Dedicated pilot data root must not be a volume root');
+  assertNoSymbolicPathComponents(requestedRoot);
+  if (!lstatSync(allowedRoot).isDirectory()) throw new Error('Dedicated pilot data root must be a directory');
+  assertNoSymbolicPathComponents(resolve(path));
   const root = realpathSync(allowedRoot);
   const target = canonicalPotentialPath(resolve(path));
-  if (!isInside(root, target)) throw new Error('Pilot data path is outside the dedicated root');
-  if (isInside(projectRoot, target) || /[\\/]OneDrive[\\/]/i.test(target) || /[\\/]\.git(?:[\\/]|$)/i.test(target)) {
+  if (target === root || !isInside(root, target)) throw new Error('Pilot data path is outside the dedicated root');
+  if (
+    isInside(projectRoot, target)
+    || hasOneDriveSegment(root)
+    || hasOneDriveSegment(target)
+    || isInsideGitWorktree(root)
+    || isInsideGitWorktree(target)
+  ) {
     throw new Error('Pilot data must remain outside Git and OneDrive');
   }
   return target;
@@ -99,6 +149,7 @@ export class LanWritePilotServer extends HttpServer {
 
   setSecurityHeaders(res) {
     super.setSecurityHeaders(res);
+    res.setHeader('X-Dashboard-Lan-Pilot', 'phase-a');
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
@@ -114,7 +165,16 @@ export class LanWritePilotServer extends HttpServer {
     const target = new URL(req.url, `${this.protocol}://${this.expectedHost}`);
     const asset = staticFiles.get(target.pathname);
     if (asset && ['GET', 'HEAD'].includes(req.method)) {
-      const body = readFileSync(asset.path);
+      let body = readFileSync(asset.path);
+      if (target.pathname === '/lan-pilot/') {
+        const source = body.toString('utf8');
+        const runtimeSource = source.replace(
+          'data-pilot-runtime="static"',
+          'data-pilot-runtime="phase-a"',
+        );
+        if (runtimeSource === source) throw new Error('Pilot runtime marker is missing');
+        body = Buffer.from(runtimeSource, 'utf8');
+      }
       res.writeHead(200, { 'Content-Type': asset.type, 'Content-Length': body.length });
       if (req.method === 'HEAD') res.end();
       else res.end(body);
@@ -151,7 +211,9 @@ export async function createLanWritePilot({
   }
   const safeDatabasePath = assertPilotDataPath(databasePath, allowedDataRoot);
   mkdirSync(dirname(safeDatabasePath), { recursive: true });
-  const db = openPhase2bDatabase(safeDatabasePath, {}, connectionOptions);
+  const recheckedDatabasePath = assertPilotDataPath(safeDatabasePath, allowedDataRoot);
+  if (recheckedDatabasePath !== safeDatabasePath) throw new Error('Pilot data path changed before database open');
+  const db = openPhase2bDatabase(recheckedDatabasePath, {}, connectionOptions);
   const accounts = createAccountRepository(db);
   const server = new LanWritePilotServer({ host, port, db, accounts, tls });
   let closed = false;
