@@ -1,4 +1,5 @@
 import { createServer as createHttpsServer } from 'node:https';
+import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,14 +21,56 @@ const staticFiles = new Map([
   ['/lan-pilot/lan-pilot.css', { path: resolve(projectRoot, 'lan-pilot/lan-pilot.css'), type: 'text/css; charset=utf-8' }],
 ]);
 
+const WINDOWS_PATH_POLICY_SCRIPT = `
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+[Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$request = [Console]::In.ReadToEnd() | ConvertFrom-Json
+$inspectedPaths = [Collections.Generic.List[string]]::new()
+$reparsePaths = [Collections.Generic.List[string]]::new()
+foreach ($candidate in @($request.existingPaths)) {
+  $item = Get-Item -LiteralPath $candidate -Force -ErrorAction Stop
+  $inspectedPaths.Add($item.FullName)
+  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+    $reparsePaths.Add($item.FullName)
+  }
+}
+$syncRoots = [Collections.Generic.List[string]]::new()
+$providerRoot = 'Registry::HKEY_CURRENT_USER\\SOFTWARE\\SyncEngines\\Providers\\OneDrive'
+if (Test-Path -LiteralPath $providerRoot -ErrorAction Stop) {
+  foreach ($provider in @(Get-ChildItem -LiteralPath $providerRoot -ErrorAction Stop)) {
+    $properties = Get-ItemProperty -LiteralPath $provider.PSPath -ErrorAction Stop
+    if ($null -ne $properties.MountPoint -and -not [string]::IsNullOrWhiteSpace([string]$properties.MountPoint)) {
+      $syncRoots.Add([string]$properties.MountPoint)
+    }
+  }
+}
+[Console]::Out.Write(([ordered]@{
+  inspectedPaths = @($inspectedPaths)
+  reparsePaths = @($reparsePaths)
+  syncRoots = @($syncRoots)
+} | ConvertTo-Json -Compress))
+`;
+
 function isInside(parent, child) {
   const value = relative(parent, child);
   return value === '' || (!value.startsWith(`..${sep}`) && value !== '..' && !isAbsolute(value));
 }
 
+function pathExistsForPolicy(path) {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') return false;
+    throw new Error('Pilot data path metadata is unavailable');
+  }
+}
+
 function canonicalPotentialPath(path) {
   let existing = path;
-  while (!existsSync(existing)) {
+  while (!pathExistsForPolicy(existing)) {
     const parent = dirname(existing);
     if (parent === existing) throw new Error('Pilot data path has no existing ancestor');
     existing = parent;
@@ -37,7 +80,7 @@ function canonicalPotentialPath(path) {
 
 function existingAncestor(path) {
   let current = resolve(path);
-  while (!existsSync(current)) {
+  while (!pathExistsForPolicy(current)) {
     const parent = dirname(current);
     if (parent === current) throw new Error('Pilot data path has no existing ancestor');
     current = parent;
@@ -45,25 +88,90 @@ function existingAncestor(path) {
   return current;
 }
 
-function assertNoSymbolicPathComponents(path) {
+function existingPathComponents(path) {
   const absolute = resolve(path);
   const root = parse(absolute).root;
   let current = root;
+  const existingPaths = [root];
   const parts = absolute.slice(root.length).split(/[\\/]+/).filter(Boolean);
   for (const part of parts) {
     current = join(current, part);
-    if (!existsSync(current)) break;
-    if (lstatSync(current).isSymbolicLink()) {
-      throw new Error('Pilot data paths must not contain symlink, junction, or reparse components');
-    }
+    if (!pathExistsForPolicy(current)) break;
+    existingPaths.push(current);
   }
+  return existingPaths;
+}
+
+function inspectWindowsPathEnvironment(existingPaths) {
+  const systemRoot = process.env.SystemRoot;
+  if (!systemRoot) throw new Error('Windows system root is unavailable');
+  const executable = resolve(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  if (!existsSync(executable)) throw new Error('Windows PowerShell is unavailable');
+  const encodedCommand = Buffer.from(WINDOWS_PATH_POLICY_SCRIPT, 'utf16le').toString('base64');
+  const output = execFileSync(executable, [
+    '-NoLogo',
+    '-NoProfile',
+    '-NonInteractive',
+    '-EncodedCommand',
+    encodedCommand,
+  ], {
+    encoding: 'utf8',
+    input: JSON.stringify({ existingPaths }),
+    maxBuffer: 1024 * 1024,
+    timeout: 15_000,
+    windowsHide: true,
+  });
+  return JSON.parse(output);
+}
+
+const defaultPathPolicy = Object.freeze({
+  inspect({ existingPaths }) {
+    if (process.platform === 'win32') return inspectWindowsPathEnvironment(existingPaths);
+    return {
+      inspectedPaths: existingPaths,
+      reparsePaths: existingPaths.filter((path) => lstatSync(path).isSymbolicLink()),
+      syncRoots: [],
+    };
+  },
+});
+
+function normalizedPathKey(path) {
+  const value = resolve(path);
+  return process.platform === 'win32' ? value.toLowerCase() : value;
+}
+
+function inspectPathPolicy(trustedPathPolicy, existingPaths) {
+  let result;
+  try {
+    if (!trustedPathPolicy || typeof trustedPathPolicy.inspect !== 'function') throw new Error('Missing path policy');
+    result = trustedPathPolicy.inspect({ existingPaths: [...existingPaths] });
+    if (
+      !result
+      || !Array.isArray(result.inspectedPaths)
+      || !Array.isArray(result.reparsePaths)
+      || !Array.isArray(result.syncRoots)
+    ) {
+      throw new Error('Invalid path policy result');
+    }
+    const reportedPaths = [...result.inspectedPaths, ...result.reparsePaths, ...result.syncRoots];
+    if (reportedPaths.some((path) => typeof path !== 'string' || !isAbsolute(path))) {
+      throw new Error('Invalid path policy path');
+    }
+    const inspected = new Set(result.inspectedPaths.map(normalizedPathKey));
+    if (existingPaths.some((path) => !inspected.has(normalizedPathKey(path)))) {
+      throw new Error('Incomplete path policy inspection');
+    }
+  } catch {
+    throw new Error('Pilot data path policy inspection failed');
+  }
+  return result;
 }
 
 function isInsideGitWorktree(path) {
   let current = existingAncestor(path);
   if (!lstatSync(current).isDirectory()) current = dirname(current);
   while (true) {
-    if (existsSync(join(current, '.git'))) return true;
+    if (pathExistsForPolicy(join(current, '.git'))) return true;
     const parent = dirname(current);
     if (parent === current) return false;
     current = parent;
@@ -74,17 +182,32 @@ function hasOneDriveSegment(path) {
   return resolve(path).split(/[\\/]+/).some((part) => /^OneDrive(?:\s*-\s*.+)?$/i.test(part));
 }
 
-export function assertPilotDataPath(path, allowedRoot) {
+export function assertPilotDataPath(path, allowedRoot, { trustedPathPolicy = defaultPathPolicy } = {}) {
   if (!isAbsolute(path) || !isAbsolute(allowedRoot)) throw new Error('Pilot data paths must be absolute');
-  if (!existsSync(allowedRoot)) throw new Error('Dedicated pilot data root must already exist');
+  if (!pathExistsForPolicy(allowedRoot)) throw new Error('Dedicated pilot data root must already exist');
   const requestedRoot = resolve(allowedRoot);
   if (requestedRoot === parse(requestedRoot).root) throw new Error('Dedicated pilot data root must not be a volume root');
-  assertNoSymbolicPathComponents(requestedRoot);
+  const existingPaths = [...new Set([
+    ...existingPathComponents(requestedRoot),
+    ...existingPathComponents(resolve(path)),
+  ])];
+  const pathEnvironment = inspectPathPolicy(trustedPathPolicy, existingPaths);
+  if (pathEnvironment.reparsePaths.length > 0) {
+    throw new Error('Pilot data paths must not contain symlink, junction, or reparse components');
+  }
   if (!lstatSync(allowedRoot).isDirectory()) throw new Error('Dedicated pilot data root must be a directory');
-  assertNoSymbolicPathComponents(resolve(path));
   const root = realpathSync(allowedRoot);
   const target = canonicalPotentialPath(resolve(path));
   if (target === root || !isInside(root, target)) throw new Error('Pilot data path is outside the dedicated root');
+  const overlapsConfiguredSyncRoot = pathEnvironment.syncRoots.some((configuredRoot) => {
+    const syncRoot = resolve(configuredRoot);
+    return isInside(syncRoot, root)
+      || isInside(root, syncRoot)
+      || isInside(syncRoot, target);
+  });
+  if (overlapsConfiguredSyncRoot) {
+    throw new Error('Pilot data must remain outside configured sync roots');
+  }
   if (
     isInside(projectRoot, target)
     || hasOneDriveSegment(root)
@@ -204,14 +327,15 @@ export async function createLanWritePilot({
   testMode = false,
   tls = null,
   connectionOptions = {},
+  trustedPathPolicy = defaultPathPolicy,
 } = {}) {
   if (!databasePath || !allowedDataRoot) throw new Error('Pilot databasePath and allowedDataRoot are required');
   if (!tls && (host !== LOOPBACK || testMode !== true)) {
     throw new Error('Insecure pilot startup is limited to explicit loopback test mode');
   }
-  const safeDatabasePath = assertPilotDataPath(databasePath, allowedDataRoot);
+  const safeDatabasePath = assertPilotDataPath(databasePath, allowedDataRoot, { trustedPathPolicy });
   mkdirSync(dirname(safeDatabasePath), { recursive: true });
-  const recheckedDatabasePath = assertPilotDataPath(safeDatabasePath, allowedDataRoot);
+  const recheckedDatabasePath = assertPilotDataPath(safeDatabasePath, allowedDataRoot, { trustedPathPolicy });
   if (recheckedDatabasePath !== safeDatabasePath) throw new Error('Pilot data path changed before database open');
   const db = openPhase2bDatabase(recheckedDatabasePath, {}, connectionOptions);
   const accounts = createAccountRepository(db);

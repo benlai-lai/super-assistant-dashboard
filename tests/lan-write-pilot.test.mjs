@@ -312,6 +312,93 @@ test('pilot data paths reject broad roots, Git worktrees, OneDrive variants, and
   }
 });
 
+test('trusted path policy rejects reported reparse components, configured sync roots, and inspection failure', () => {
+  const root = temporaryRoot();
+  try {
+    const dedicated = join(root, 'dedicated');
+    const databasePath = join(dedicated, 'data', 'pilot.sqlite3');
+    mkdirSync(dedicated);
+    const allowLocal = {
+      inspect({ existingPaths }) {
+        return { inspectedPaths: existingPaths, reparsePaths: [], syncRoots: [] };
+      },
+    };
+    assert.equal(
+      assertPilotDataPath(databasePath, dedicated, { trustedPathPolicy: allowLocal }),
+      resolve(databasePath),
+    );
+
+    for (const reparseKind of ['non-symlink reparse', 'mount point']) {
+      const reportedReparse = join(dedicated, reparseKind);
+      const rejectReparse = {
+        inspect({ existingPaths }) {
+          return { inspectedPaths: existingPaths, reparsePaths: [reportedReparse], syncRoots: [] };
+        },
+      };
+      assert.throws(
+        () => assertPilotDataPath(databasePath, dedicated, { trustedPathPolicy: rejectReparse }),
+        /reparse/i,
+        `${reparseKind} must be rejected by the centralized policy contract`,
+      );
+    }
+
+    const customSyncRoot = join(root, '公司共用資料');
+    const syncedDataRoot = join(customSyncRoot, 'pilot-data');
+    mkdirSync(syncedDataRoot, { recursive: true });
+    const rejectConfiguredSyncRoot = {
+      inspect({ existingPaths }) {
+        return { inspectedPaths: existingPaths, reparsePaths: [], syncRoots: [customSyncRoot] };
+      },
+    };
+    assert.throws(
+      () => assertPilotDataPath(
+        join(syncedDataRoot, 'pilot.sqlite3'),
+        syncedDataRoot,
+        { trustedPathPolicy: rejectConfiguredSyncRoot },
+      ),
+      /sync root/i,
+    );
+
+    const failedInspection = {
+      inspect() {
+        throw new Error('synthetic path policy failure');
+      },
+    };
+    assert.throws(
+      () => assertPilotDataPath(databasePath, dedicated, { trustedPathPolicy: failedInspection }),
+      /path policy inspection failed/i,
+    );
+
+    const invalidInspection = {
+      inspect({ existingPaths }) {
+        return { inspectedPaths: [null, ...existingPaths], reparsePaths: [], syncRoots: [] };
+      },
+    };
+    assert.throws(
+      () => assertPilotDataPath(databasePath, dedicated, { trustedPathPolicy: invalidInspection }),
+      /path policy inspection failed/i,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(existsSync(root), false);
+  }
+});
+
+test('Windows default path policy accepts a real dedicated local directory', {
+  skip: process.platform !== 'win32',
+}, () => {
+  const root = temporaryRoot();
+  try {
+    const dedicated = join(root, 'windows-local-policy');
+    mkdirSync(dedicated);
+    const databasePath = join(dedicated, 'data', 'pilot.sqlite3');
+    assert.equal(assertPilotDataPath(databasePath, dedicated), resolve(databasePath));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(existsSync(root), false);
+  }
+});
+
 test('existing pilot editor accounts must match supplied identity, active role, and password', async () => {
   const root = temporaryRoot();
   const pilot = await createLanWritePilot({

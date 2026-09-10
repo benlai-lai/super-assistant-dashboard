@@ -41,37 +41,49 @@ async function fulfillPilotJson(route, payload, { pilotHeader = true, status = 2
   await route.fulfill({ status, headers, body: JSON.stringify(payload) });
 }
 
-async function installFetchCompletionSignals(context) {
+async function installOperationCompletionSignals(context) {
+  await context.route('**/lan-pilot/', async (route) => {
+    const response = await route.fetch();
+    const html = await response.text();
+    const scriptTag = '<script src="./lan-pilot.js"></script>';
+    if (!html.includes(scriptTag)) throw new Error('LAN pilot operation-observer script tag is missing');
+    await route.fulfill({
+      response,
+      body: html.replace(
+        scriptTag,
+        '<script src="./lan-pilot.js" data-operation-observer="phase-a-e2e"></script>',
+      ),
+    });
+  });
   await context.addInitScript(() => {
-    const nativeFetch = window.fetch.bind(window);
-    window.__dashboardTestFetchCompletions = [];
-    window.fetch = async (input, options = {}) => {
-      const response = await nativeFetch(input, options);
-      const url = typeof input === 'string' ? input : input.url;
-      const method = options.method ?? (typeof input === 'string' ? 'GET' : input.method) ?? 'GET';
-      const nativeJson = response.json.bind(response);
-      response.json = async () => {
-        try {
-          return await nativeJson();
-        } finally {
-          window.__dashboardTestFetchCompletions.push({ url, method, status: response.status });
-        }
-      };
-      return response;
-    };
+    window.__dashboardTestOperationEvents = { started: [], settled: [] };
+    window.__dashboardPilotTestObserver = Object.freeze({
+      started(event) {
+        window.__dashboardTestOperationEvents.started.push({ id: event.id, name: event.name });
+      },
+      settled(event) {
+        window.__dashboardTestOperationEvents.settled.push({ id: event.id, name: event.name });
+      },
+    });
   });
 }
 
-function fetchCompletionCount(page, { urlIncludes, method = 'GET' }) {
-  return page.evaluate(({ expectedUrl, expectedMethod }) => window.__dashboardTestFetchCompletions
-    .filter((entry) => entry.url.includes(expectedUrl) && entry.method === expectedMethod).length,
-  { expectedUrl: urlIncludes, expectedMethod: method });
+function operationStartedCount(page, name) {
+  return page.evaluate((expectedName) => window.__dashboardTestOperationEvents.started
+    .filter((entry) => entry.name === expectedName).length, name);
 }
 
-async function waitForFetchCompletion(page, { urlIncludes, method = 'GET', after }) {
-  await page.waitForFunction(({ expectedUrl, expectedMethod, previousCount }) => window.__dashboardTestFetchCompletions
-    .filter((entry) => entry.url.includes(expectedUrl) && entry.method === expectedMethod).length > previousCount,
-  { expectedUrl: urlIncludes, expectedMethod: method, previousCount: after });
+async function waitForOperationStarted(page, { name, after }) {
+  await page.waitForFunction(({ expectedName, previousCount }) => window.__dashboardTestOperationEvents.started
+    .filter((entry) => entry.name === expectedName).length > previousCount,
+  { expectedName: name, previousCount: after });
+  return page.evaluate((expectedName) => window.__dashboardTestOperationEvents.started
+    .filter((entry) => entry.name === expectedName).at(-1).id, name);
+}
+
+async function waitForOperationSettled(page, operationId) {
+  await page.waitForFunction((expectedId) => window.__dashboardTestOperationEvents.settled
+    .some((entry) => entry.id === expectedId), operationId);
 }
 
 test.beforeAll(async () => {
@@ -185,6 +197,448 @@ test('three isolated browser sessions share CRUD, surface stale edits, persist a
   }
 });
 
+test('logical mutation operations own independent idempotency keys and preserve ambiguous retries', async ({ browser }) => {
+  const context = await browser.newContext();
+  await installOperationCompletionSignals(context);
+  const page = await context.newPage();
+  const requests = [];
+  let customerScenario = null;
+  await page.route('**/api/customers', async (route) => {
+    if (route.request().method() !== 'POST' || !customerScenario) return route.continue();
+    const request = {
+      body: route.request().postDataJSON(),
+      key: route.request().headers()['idempotency-key'],
+    };
+    requests.push(request);
+    return customerScenario(route, request, requests.length - 1);
+  });
+
+  try {
+    await login(page, 1);
+
+    customerScenario = (route, request, index) => fulfillPilotJson(
+      route,
+      { error: `synthetic_retry_${index + 1}` },
+      { status: 500 },
+    );
+    for (const [index, name] of ['A 相同內容', 'B 不同內容', 'A 相同內容'].entries()) {
+      await page.getByLabel('名稱').fill(name);
+      await page.getByRole('button', { name: '儲存客戶' }).click();
+      await expect(page.locator('#customer-status')).toContainText(`synthetic_retry_${index + 1}`);
+    }
+    expect(requests[2].key).toBe(requests[0].key);
+    expect(requests[1].key).not.toBe(requests[0].key);
+
+    await page.locator('#new-customer').click();
+    await page.getByLabel('名稱').fill('相同 fingerprint 的獨立操作');
+    const firstStarted = deferred();
+    const secondStarted = deferred();
+    const releaseFirst = deferred();
+    const releaseSecond = deferred();
+    const independent = [];
+    customerScenario = async (route, request) => {
+      independent.push(request);
+      if (independent.length === 1) {
+        firstStarted.resolve();
+        await releaseFirst.promise;
+        return fulfillPilotJson(route, {
+          customer: {
+            id: 'synthetic-older-operation',
+            display_name: request.body.displayName,
+            row_version: 1,
+          },
+        }, { status: 201 });
+      }
+      if (independent.length === 2) {
+        secondStarted.resolve();
+        await releaseSecond.promise;
+      }
+      return fulfillPilotJson(route, { error: 'synthetic_newer_retry' }, { status: 500 });
+    };
+
+    const firstOperationBaseline = await operationStartedCount(page, 'mutate-customer');
+    await page.getByRole('button', { name: '儲存客戶' }).click();
+    await firstStarted.promise;
+    const firstOperationId = await waitForOperationStarted(page, {
+      name: 'mutate-customer',
+      after: firstOperationBaseline,
+    });
+
+    await page.locator('#new-customer').click();
+    await page.getByLabel('名稱').fill('相同 fingerprint 的獨立操作');
+    const secondOperationBaseline = await operationStartedCount(page, 'mutate-customer');
+    await page.getByRole('button', { name: '儲存客戶' }).click();
+    await secondStarted.promise;
+    const secondOperationId = await waitForOperationStarted(page, {
+      name: 'mutate-customer',
+      after: secondOperationBaseline,
+    });
+    expect(independent[1].key).not.toBe(independent[0].key);
+
+    releaseFirst.resolve();
+    await waitForOperationSettled(page, firstOperationId);
+    await expect(page.locator('#customer-status')).toHaveText('儲存中…');
+
+    releaseSecond.resolve();
+    await waitForOperationSettled(page, secondOperationId);
+    await expect(page.locator('#customer-status')).toContainText('synthetic_newer_retry');
+    const retryBaseline = await operationStartedCount(page, 'mutate-customer');
+    await page.getByRole('button', { name: '儲存客戶' }).click();
+    const retryOperationId = await waitForOperationStarted(page, {
+      name: 'mutate-customer',
+      after: retryBaseline,
+    });
+    await waitForOperationSettled(page, retryOperationId);
+    expect(independent[2].key).toBe(independent[1].key);
+
+    await page.locator('#new-customer').click();
+    await page.getByLabel('名稱').fill('伺服器已提交但回應中斷');
+    const committedKeys = [];
+    let committedRequestCount = 0;
+    customerScenario = async (route, request) => {
+      committedKeys.push(request.key);
+      committedRequestCount += 1;
+      if (committedRequestCount === 1) {
+        const response = await route.fetch();
+        expect(response.status()).toBe(201);
+        return fulfillPilotJson(route, { error: 'synthetic_response_interrupted' }, { status: 500 });
+      }
+      return route.continue();
+    };
+
+    const interruptedBaseline = await operationStartedCount(page, 'mutate-customer');
+    await page.getByRole('button', { name: '儲存客戶' }).click();
+    const interruptedId = await waitForOperationStarted(page, {
+      name: 'mutate-customer',
+      after: interruptedBaseline,
+    });
+    await waitForOperationSettled(page, interruptedId);
+    await expect(page.locator('#customer-status')).toContainText('synthetic_response_interrupted');
+
+    const replayBaseline = await operationStartedCount(page, 'mutate-customer');
+    await page.getByRole('button', { name: '儲存客戶' }).click();
+    const replayId = await waitForOperationStarted(page, {
+      name: 'mutate-customer',
+      after: replayBaseline,
+    });
+    await waitForOperationSettled(page, replayId);
+    await expect(page.locator('#customer-status')).toHaveText('已儲存');
+    expect(committedKeys[1]).toBe(committedKeys[0]);
+    expect(pilot.db.prepare('SELECT COUNT(*) AS count FROM customers WHERE display_name = ?')
+      .get('伺服器已提交但回應中斷').count).toBe(1);
+
+    await page.locator('#new-customer').click();
+    await page.getByLabel('名稱').fill('伺服器已提交但回應中斷');
+    const independentCreateBaseline = await operationStartedCount(page, 'mutate-customer');
+    await page.getByRole('button', { name: '儲存客戶' }).click();
+    const independentCreateId = await waitForOperationStarted(page, {
+      name: 'mutate-customer',
+      after: independentCreateBaseline,
+    });
+    await waitForOperationSettled(page, independentCreateId);
+    expect(committedKeys[2]).not.toBe(committedKeys[1]);
+    expect(pilot.db.prepare('SELECT COUNT(*) AS count FROM customers WHERE display_name = ?')
+      .get('伺服器已提交但回應中斷').count).toBe(2);
+
+    for (const responseCase of [
+      { label: '格式錯誤的成功回應', body: '{' },
+      { label: '缺少 entity 的成功回應', body: '{}' },
+    ]) {
+      await page.locator('#new-customer').click();
+      await page.getByLabel('名稱').fill(responseCase.label);
+      const ambiguousKeys = [];
+      let ambiguousRequestCount = 0;
+      customerScenario = async (route, request) => {
+        ambiguousKeys.push(request.key);
+        ambiguousRequestCount += 1;
+        if (ambiguousRequestCount === 1) {
+          const response = await route.fetch();
+          expect(response.status()).toBe(201);
+          return route.fulfill({
+            status: 201,
+            headers: {
+              'Content-Type': 'application/json; charset=utf-8',
+              'X-Dashboard-Lan-Pilot': 'phase-a',
+            },
+            body: responseCase.body,
+          });
+        }
+        return route.continue();
+      };
+
+      const ambiguousBaseline = await operationStartedCount(page, 'mutate-customer');
+      await page.getByRole('button', { name: '儲存客戶' }).click();
+      const ambiguousId = await waitForOperationStarted(page, {
+        name: 'mutate-customer',
+        after: ambiguousBaseline,
+      });
+      await waitForOperationSettled(page, ambiguousId);
+      await expect(page.locator('#customer-status')).toContainText('invalid_response');
+      await expect(page.locator('#customer-id')).toHaveValue('');
+      expect(pilot.db.prepare('SELECT COUNT(*) AS count FROM customers WHERE display_name = ?')
+        .get(responseCase.label).count).toBe(1);
+
+      const replayBaselineForInvalidResponse = await operationStartedCount(page, 'mutate-customer');
+      await page.getByRole('button', { name: '儲存客戶' }).click();
+      const replayIdForInvalidResponse = await waitForOperationStarted(page, {
+        name: 'mutate-customer',
+        after: replayBaselineForInvalidResponse,
+      });
+      await waitForOperationSettled(page, replayIdForInvalidResponse);
+      await expect(page.locator('#customer-status')).toHaveText('已儲存');
+      await expect(page.locator('#selected-customer')).toContainText(responseCase.label);
+      expect(ambiguousKeys[1]).toBe(ambiguousKeys[0]);
+      expect(pilot.db.prepare('SELECT COUNT(*) AS count FROM customers WHERE display_name = ?')
+        .get(responseCase.label).count).toBe(1);
+    }
+  } finally {
+    await context.close();
+  }
+});
+
+test('selection resets and session transitions clear every mutation status', async ({ browser }) => {
+  const customerName = `狀態清理客戶-${randomBytes(4).toString('hex')}`;
+  createCustomerRepository(pilot.db).create({
+    id: `status-customer-${randomBytes(8).toString('hex')}`,
+    displayName: customerName,
+    createdAt: new Date().toISOString(),
+  });
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await login(page, 1);
+    for (const buttonId of ['new-customer', 'new-inquiry', 'new-item']) {
+      await page.evaluate(() => {
+        document.querySelector('#customer-status').textContent = '舊客戶狀態';
+        document.querySelector('#inquiry-status').textContent = '舊詢價狀態';
+        document.querySelector('#item-status').textContent = '舊品項狀態';
+      });
+      await page.locator(`#${buttonId}`).click();
+      await expect(page.locator('#customer-status')).toHaveText('');
+      await expect(page.locator('#inquiry-status')).toHaveText('');
+      await expect(page.locator('#item-status')).toHaveText('');
+    }
+
+    await page.evaluate(() => {
+      document.querySelector('#customer-status').textContent = '舊客戶狀態';
+      document.querySelector('#inquiry-status').textContent = '舊詢價狀態';
+      document.querySelector('#item-status').textContent = '舊品項狀態';
+    });
+    await page.getByRole('button', { name: customerName }).click();
+    await expect(page.locator('#customer-status')).toHaveText('');
+    await expect(page.locator('#inquiry-status')).toHaveText('');
+    await expect(page.locator('#item-status')).toHaveText('');
+
+    await page.evaluate(() => {
+      document.querySelector('#customer-status').textContent = '舊客戶狀態';
+      document.querySelector('#inquiry-status').textContent = '舊詢價狀態';
+      document.querySelector('#item-status').textContent = '舊品項狀態';
+    });
+    const logoutStarted = deferred();
+    const releaseLogout = deferred();
+    await page.route('**/api/session', async (route) => {
+      if (route.request().method() !== 'DELETE') return route.continue();
+      logoutStarted.resolve();
+      await releaseLogout.promise;
+      return route.continue();
+    });
+    const reloaded = page.waitForNavigation({ waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: '登出' }).dispatchEvent('click');
+    await logoutStarted.promise;
+    await expect(page.locator('#customer-status')).toHaveText('');
+    await expect(page.locator('#inquiry-status')).toHaveText('');
+    await expect(page.locator('#item-status')).toHaveText('');
+    releaseLogout.resolve();
+    await reloaded;
+    await expect(page.locator('#login-panel')).toBeVisible();
+    await login(page, 1);
+    await expect(page.locator('#customer-status')).toHaveText('');
+    await expect(page.locator('#inquiry-status')).toHaveText('');
+    await expect(page.locator('#item-status')).toHaveText('');
+  } finally {
+    await context.close();
+  }
+});
+
+test('successful and stale parent continuations preserve only their own mutation status', async ({ browser }) => {
+  const suffix = randomBytes(4).toString('hex');
+  const customerId = `status-parent-customer-${suffix}`;
+  const inquiryId = `status-parent-inquiry-${suffix}`;
+  const itemId = `status-parent-item-${suffix}`;
+  const customerName = `父層狀態客戶-${suffix}`;
+  const inquiryTitle = `父層狀態詢價-${suffix}`;
+  const itemDescription = `父層狀態品項-${suffix}`;
+  const createdAt = new Date().toISOString();
+  const customers = createCustomerRepository(pilot.db);
+  const inquiries = createInquiryRepository(pilot.db);
+  customers.create({ id: customerId, displayName: customerName, createdAt });
+  inquiries.create({
+    id: inquiryId,
+    customerId,
+    title: inquiryTitle,
+    status: 'draft',
+    createdAt,
+    updatedAt: createdAt,
+  });
+  inquiries.addItem({
+    id: itemId,
+    inquiryId,
+    description: itemDescription,
+    quantity: 1,
+    createdAt,
+    updatedAt: createdAt,
+  });
+
+  const context = await browser.newContext();
+  await installOperationCompletionSignals(context);
+  const page = await context.newPage();
+  const statusIds = ['customer-status', 'inquiry-status', 'item-status'];
+  async function seedStatuses() {
+    await page.evaluate((ids) => {
+      for (const id of ids) document.querySelector(`#${id}`).textContent = `舊-${id}`;
+    }, statusIds);
+  }
+  async function expectOnlyStatus(statusId, expected) {
+    for (const candidate of statusIds) {
+      const locator = page.locator(`#${candidate}`);
+      if (candidate === statusId) await expect(locator).toContainText(expected);
+      else await expect(locator).toHaveText('');
+    }
+  }
+  async function submitAndSettle(buttonName, operationName) {
+    const baseline = await operationStartedCount(page, operationName);
+    await page.getByRole('button', { name: buttonName }).click();
+    const operationId = await waitForOperationStarted(page, { name: operationName, after: baseline });
+    await waitForOperationSettled(page, operationId);
+  }
+
+  try {
+    await login(page, 1);
+    await page.getByRole('button', { name: customerName }).click();
+    await page.getByRole('button', { name: new RegExp(inquiryTitle) }).click();
+    await page.getByRole('button', { name: new RegExp(itemDescription) }).click();
+
+    await seedStatuses();
+    await page.locator('#item-description').fill(`${itemDescription}-成功`);
+    await submitAndSettle('儲存品項', 'mutate-item');
+    await expectOnlyStatus('item-status', '已儲存');
+
+    const itemBeforeStale = inquiries.getItem(itemId);
+    inquiries.updateItem(inquiryId, itemId, { description: `${itemDescription}-外部更新` }, {
+      expectedVersion: itemBeforeStale.row_version,
+      updatedAt: new Date().toISOString(),
+    });
+    await seedStatuses();
+    await page.locator('#item-description').fill(`${itemDescription}-過期嘗試`);
+    await submitAndSettle('儲存品項', 'mutate-item');
+    await expectOnlyStatus('item-status', '資料已被其他人修改');
+    await expect(page.locator('#item-description')).toHaveValue(`${itemDescription}-外部更新`);
+
+    await seedStatuses();
+    await page.locator('#inquiry-title').fill(`${inquiryTitle}-成功`);
+    await submitAndSettle('儲存詢價', 'mutate-inquiry');
+    await expectOnlyStatus('inquiry-status', '已儲存');
+
+    const inquiryBeforeStale = inquiries.get(inquiryId);
+    inquiries.update(inquiryId, { title: `${inquiryTitle}-外部更新` }, {
+      expectedVersion: inquiryBeforeStale.row_version,
+      updatedAt: new Date().toISOString(),
+    });
+    await seedStatuses();
+    await page.locator('#inquiry-title').fill(`${inquiryTitle}-過期嘗試`);
+    await submitAndSettle('儲存詢價', 'mutate-inquiry');
+    await expectOnlyStatus('inquiry-status', '資料已被其他人修改');
+    await expect(page.locator('#inquiry-title')).toHaveValue(`${inquiryTitle}-外部更新`);
+
+    await seedStatuses();
+    await page.locator('#customer-name').fill(`${customerName}-成功`);
+    await submitAndSettle('儲存客戶', 'mutate-customer');
+    await expectOnlyStatus('customer-status', '已儲存');
+
+    const customerBeforeStale = customers.get(customerId);
+    customers.update(customerId, { displayName: `${customerName}-外部更新` }, {
+      expectedVersion: customerBeforeStale.row_version,
+      updatedAt: new Date().toISOString(),
+    });
+    await seedStatuses();
+    await page.locator('#customer-name').fill(`${customerName}-過期嘗試`);
+    await submitAndSettle('儲存客戶', 'mutate-customer');
+    await expectOnlyStatus('customer-status', '資料已被其他人修改');
+    await expect(page.locator('#customer-name')).toHaveValue(`${customerName}-外部更新`);
+  } finally {
+    await context.close();
+  }
+});
+
+test('operation completion barrier observes the full async application continuation', async ({ browser }) => {
+  const context = await browser.newContext();
+  await installOperationCompletionSignals(context);
+  const page = await context.newPage();
+  try {
+    await login(page, 1);
+    const followupStarted = deferred();
+    const releaseFollowup = deferred();
+    await page.route('**/api/customers*', async (route) => {
+      if (route.request().method() === 'POST') return route.continue();
+      followupStarted.resolve();
+      await releaseFollowup.promise;
+      return route.continue();
+    });
+    await page.locator('#new-customer').click();
+    await page.getByLabel('名稱').fill(`完成屏障測試-${randomBytes(4).toString('hex')}`);
+    const baseline = await operationStartedCount(page, 'mutate-customer');
+    await page.getByRole('button', { name: '儲存客戶' }).click();
+    const operationId = await waitForOperationStarted(page, {
+      name: 'mutate-customer',
+      after: baseline,
+    });
+    await followupStarted.promise;
+    expect(await page.evaluate((expectedId) => window.__dashboardTestOperationEvents.settled
+      .some((entry) => entry.id === expectedId), operationId)).toBe(false);
+    releaseFollowup.resolve();
+    await waitForOperationSettled(page, operationId);
+    await expect(page.locator('#customer-status')).toHaveText('已儲存');
+    await expect(page.locator('#customer-id')).not.toHaveValue('');
+    await expect(page.locator('#customer-version')).toHaveValue('1');
+    await expect(page.getByLabel('名稱')).toHaveValue(/完成屏障測試-/);
+    await expect(page.locator('#selected-customer')).toContainText('完成屏障測試-');
+    await expect(page.locator('#customer-form').getByRole('button', { name: '儲存客戶' })).toBeEnabled();
+  } finally {
+    await context.close();
+  }
+});
+
+test('ordinary pilot execution never invokes a mutable global test observer', async ({ browser }) => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.__dashboardUnexpectedObserverCalls = 0;
+    window.__dashboardPilotTestObserver = {
+      started(event) {
+        window.__dashboardUnexpectedObserverCalls += 1;
+        if (event.name === 'mutate-customer') document.querySelector('#new-customer')?.click();
+      },
+      settled() {
+        window.__dashboardUnexpectedObserverCalls += 1;
+        throw new Error('ordinary execution must not invoke a global test observer');
+      },
+    };
+  });
+  const page = await context.newPage();
+  try {
+    await login(page, 1);
+    const name = `一般模式觀察邊界-${randomBytes(4).toString('hex')}`;
+    await page.locator('#new-customer').click();
+    await page.getByLabel('名稱').fill(name);
+    await page.getByRole('button', { name: '儲存客戶' }).click();
+    await expect(page.locator('#customer-status')).toHaveText('已儲存');
+    await expect(page.getByLabel('名稱')).toHaveValue(name);
+    await expect(page.locator('#selected-customer')).toContainText(name);
+    expect(await page.evaluate(() => window.__dashboardUnexpectedObserverCalls)).toBe(0);
+  } finally {
+    await context.close();
+  }
+});
+
 test('out-of-order item and audit responses cannot replace a newer selection or a logged-out view', async ({ browser }) => {
   const timestamp = '2026-09-09T12:00:00.000Z';
   const customers = createCustomerRepository(pilot.db);
@@ -208,7 +662,7 @@ test('out-of-order item and audit responses cannot replace a newer selection or 
   });
 
   const context = await browser.newContext();
-  await installFetchCompletionSignals(context);
+  await installOperationCompletionSignals(context);
   const page = await context.newPage();
   const runtimeErrors = [];
   let expectedHttpErrors = 0;
@@ -249,13 +703,17 @@ test('out-of-order item and audit responses cannot replace a newer selection or 
       }
       return fulfillPilotJson(route, { items: [{ id: 'current-b', description: '目前 B', quantity: 1 }] });
     };
+    const aToBOperationBaseline = await operationStartedCount(page, 'load-items');
     await page.getByRole('button', { name: /競態詢價 A/ }).click();
     await aToBStarted.promise;
+    const aToBOperationId = await waitForOperationStarted(page, {
+      name: 'load-items',
+      after: aToBOperationBaseline,
+    });
     await page.getByRole('button', { name: /競態詢價 B/ }).click();
     await expect(page.locator('#item-list')).toContainText('目前 B');
-    const aToBBaseline = await fetchCompletionCount(page, { urlIncludes: '/api/inquiries/race-inquiry-a/items' });
     releaseAToB.resolve();
-    await waitForFetchCompletion(page, { urlIncludes: '/api/inquiries/race-inquiry-a/items', after: aToBBaseline });
+    await waitForOperationSettled(page, aToBOperationId);
     await expect(page.locator('#item-list')).toContainText('目前 B');
     await expect(page.locator('#item-list')).not.toContainText('過期 A→B');
 
@@ -271,15 +729,19 @@ test('out-of-order item and audit responses cannot replace a newer selection or 
       const description = inquiryId === 'race-inquiry-a' ? '目前 A 循環' : '目前 B 循環';
       return fulfillPilotJson(route, { items: [{ id: `current-${inquiryId}`, description, quantity: 1 }] });
     };
+    const aToBToAOperationBaseline = await operationStartedCount(page, 'load-items');
     await page.getByRole('button', { name: /競態詢價 A/ }).click();
     await aToBToAStarted.promise;
+    const aToBToAOperationId = await waitForOperationStarted(page, {
+      name: 'load-items',
+      after: aToBToAOperationBaseline,
+    });
     await page.getByRole('button', { name: /競態詢價 B/ }).click();
     await expect(page.locator('#item-list')).toContainText('目前 B 循環');
     await page.getByRole('button', { name: /競態詢價 A/ }).click();
     await expect(page.locator('#item-list')).toContainText('目前 A 循環');
-    const aToBToABaseline = await fetchCompletionCount(page, { urlIncludes: '/api/inquiries/race-inquiry-a/items' });
     releaseAToBToA.resolve();
-    await waitForFetchCompletion(page, { urlIncludes: '/api/inquiries/race-inquiry-a/items', after: aToBToABaseline });
+    await waitForOperationSettled(page, aToBToAOperationId);
     await expect(page.locator('#item-list')).toContainText('目前 A 循環');
     await expect(page.locator('#item-list')).not.toContainText('過期 A 循環');
 
@@ -293,13 +755,17 @@ test('out-of-order item and audit responses cannot replace a newer selection or 
       }
       return fulfillPilotJson(route, { entries: [{ created_at: timestamp, actor_id: 'pilot-editor-1', action: '目前稽核' }] });
     };
+    const auditOperationBaseline = await operationStartedCount(page, 'load-audit');
     await page.getByRole('button', { name: /競態詢價 A/ }).click();
     await auditStarted.promise;
+    const auditOperationId = await waitForOperationStarted(page, {
+      name: 'load-audit',
+      after: auditOperationBaseline,
+    });
     await page.getByRole('button', { name: /競態詢價 B/ }).click();
     await expect(page.locator('#audit-list')).toContainText('目前稽核');
-    const auditBaseline = await fetchCompletionCount(page, { urlIncludes: 'entityId=race-inquiry-a' });
     releaseAudit.resolve();
-    await waitForFetchCompletion(page, { urlIncludes: 'entityId=race-inquiry-a', after: auditBaseline });
+    await waitForOperationSettled(page, auditOperationId);
     await expect(page.locator('#audit-list')).toContainText('目前稽核');
     await expect(page.locator('#audit-list')).not.toContainText('過期稽核');
 
@@ -314,13 +780,17 @@ test('out-of-order item and audit responses cannot replace a newer selection or 
       return fulfillPilotJson(route, { items: [{ id: 'current-after-error', description: '錯誤後仍為 B', quantity: 1 }] });
     };
     auditScenario = async (route) => fulfillPilotJson(route, { entries: [] });
+    const staleErrorOperationBaseline = await operationStartedCount(page, 'load-items');
     await page.getByRole('button', { name: /競態詢價 A/ }).click();
     await staleErrorStarted.promise;
+    const staleErrorOperationId = await waitForOperationStarted(page, {
+      name: 'load-items',
+      after: staleErrorOperationBaseline,
+    });
     await page.getByRole('button', { name: /競態詢價 B/ }).click();
     await expect(page.locator('#item-list')).toContainText('錯誤後仍為 B');
-    const staleErrorBaseline = await fetchCompletionCount(page, { urlIncludes: '/api/inquiries/race-inquiry-a/items' });
     releaseStaleError.resolve();
-    await waitForFetchCompletion(page, { urlIncludes: '/api/inquiries/race-inquiry-a/items', after: staleErrorBaseline });
+    await waitForOperationSettled(page, staleErrorOperationId);
     await expect(page.locator('#item-list')).toContainText('錯誤後仍為 B');
 
     const logoutItemsStarted = deferred();
@@ -351,23 +821,31 @@ test('out-of-order item and audit responses cannot replace a newer selection or 
       await releaseLogout.promise;
       return route.continue();
     });
+    const logoutItemsOperationBaseline = await operationStartedCount(page, 'load-items');
+    const logoutAuditOperationBaseline = await operationStartedCount(page, 'load-audit');
     await page.getByRole('button', { name: /競態詢價 A/ }).click();
     await Promise.all([logoutItemsStarted.promise, logoutAuditStarted.promise]);
-    await page.getByRole('button', { name: '登出' }).click();
+    const logoutItemsOperationId = await waitForOperationStarted(page, {
+      name: 'load-items',
+      after: logoutItemsOperationBaseline,
+    });
+    const logoutAuditOperationId = await waitForOperationStarted(page, {
+      name: 'load-audit',
+      after: logoutAuditOperationBaseline,
+    });
+    const reloaded = page.waitForNavigation({ waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: '登出' }).dispatchEvent('click');
     await logoutStarted.promise;
-    const [logoutItemsBaseline, logoutAuditBaseline] = await Promise.all([
-      fetchCompletionCount(page, { urlIncludes: '/api/inquiries/race-inquiry-a/items' }),
-      fetchCompletionCount(page, { urlIncludes: 'entityId=race-inquiry-a' }),
-    ]);
     releaseLogoutItems.resolve();
     releaseLogoutAudit.resolve();
     await Promise.all([
-      waitForFetchCompletion(page, { urlIncludes: '/api/inquiries/race-inquiry-a/items', after: logoutItemsBaseline }),
-      waitForFetchCompletion(page, { urlIncludes: 'entityId=race-inquiry-a', after: logoutAuditBaseline }),
+      waitForOperationSettled(page, logoutItemsOperationId),
+      waitForOperationSettled(page, logoutAuditOperationId),
     ]);
     await expect(page.locator('#item-list')).not.toContainText('登出後過期資料');
     await expect(page.locator('#audit-status')).not.toHaveText('修改紀錄載入失敗');
     releaseLogout.resolve();
+    await reloaded;
     await expect(page.locator('#login-panel')).toBeVisible();
 
     expect(expectedHttpErrors).toBe(2);
@@ -400,7 +878,7 @@ test('selection resets and delayed mutation continuations cannot restore stale U
   });
 
   const context = await browser.newContext();
-  await installFetchCompletionSignals(context);
+  await installOperationCompletionSignals(context);
   const page = await context.newPage();
   const runtimeErrors = [];
   let expectedHttpErrors = 0;
@@ -423,12 +901,16 @@ test('selection resets and delayed mutation continuations cannot restore stale U
       await releaseInquiryLoad.promise;
       return route.continue();
     });
+    const inquiryLoadOperationBaseline = await operationStartedCount(page, 'load-inquiries');
     await page.getByRole('button', { name: '後續處理測試客戶' }).click();
     await inquiryLoadStarted.promise;
+    const inquiryLoadOperationId = await waitForOperationStarted(page, {
+      name: 'load-inquiries',
+      after: inquiryLoadOperationBaseline,
+    });
     await page.locator('#new-customer').click();
-    const inquiryLoadBaseline = await fetchCompletionCount(page, { urlIncludes: '/api/inquiries?limit=100' });
     releaseInquiryLoad.resolve();
-    await waitForFetchCompletion(page, { urlIncludes: '/api/inquiries?limit=100', after: inquiryLoadBaseline });
+    await waitForOperationSettled(page, inquiryLoadOperationId);
     await expect(page.locator('#inquiry-list')).toBeEmpty();
     expect(runtimeErrors).toEqual([]);
     await page.unroute('**/api/inquiries?limit=100');
@@ -442,12 +924,17 @@ test('selection resets and delayed mutation continuations cannot restore stale U
       await releaseItemLoad.promise;
       return fulfillPilotJson(route, { items: [{ id: 'stale-reset-item', description: '不應恢復的品項', quantity: 1 }] });
     });
+    const itemLoadOperationBaseline = await operationStartedCount(page, 'load-items');
     await page.getByRole('button', { name: /後續詢價 A/ }).click();
     await itemLoadStarted.promise;
+    const itemLoadOperationId = await waitForOperationStarted(page, {
+      name: 'load-items',
+      after: itemLoadOperationBaseline,
+    });
     await page.locator('#new-item').click();
-    const itemLoadBaseline = await fetchCompletionCount(page, { urlIncludes: '/api/inquiries/continuation-inquiry-a/items' });
+    await expect(page.locator('#item-status')).toHaveText('');
     releaseItemLoad.resolve();
-    await waitForFetchCompletion(page, { urlIncludes: '/api/inquiries/continuation-inquiry-a/items', after: itemLoadBaseline });
+    await waitForOperationSettled(page, itemLoadOperationId);
     await expect(page.locator('#item-list')).not.toContainText('不應恢復的品項');
     await expect(page.locator('#item-description')).toHaveValue('');
     await page.unroute('**/api/inquiries/continuation-inquiry-a/items');
@@ -463,12 +950,18 @@ test('selection resets and delayed mutation continuations cannot restore stale U
       return route.fulfill({ response });
     });
     await page.getByLabel('標題').fill('伺服器已寫入但畫面不得跳回 A');
+    const mutationOperationBaseline = await operationStartedCount(page, 'mutate-inquiry');
     await page.getByRole('button', { name: '儲存詢價' }).click();
     await mutationReachedServer.promise;
+    const mutationOperationId = await waitForOperationStarted(page, {
+      name: 'mutate-inquiry',
+      after: mutationOperationBaseline,
+    });
     await page.getByRole('button', { name: /後續詢價 B/ }).click();
-    const mutationBaseline = await fetchCompletionCount(page, { urlIncludes: '/api/inquiries/continuation-inquiry-a', method: 'PATCH' });
+    await expect(page.locator('#inquiry-status')).toHaveText('');
     releaseMutation.resolve();
-    await waitForFetchCompletion(page, { urlIncludes: '/api/inquiries/continuation-inquiry-a', method: 'PATCH', after: mutationBaseline });
+    await waitForOperationSettled(page, mutationOperationId);
+    await expect(page.locator('#inquiry-status')).toHaveText('');
     await expect(page.locator('#selected-inquiry')).toContainText('後續詢價 B');
     await expect(page.getByLabel('標題')).toHaveValue('後續詢價 B');
     expect(inquiries.get('continuation-inquiry-a').title).toBe('伺服器已寫入但畫面不得跳回 A');
@@ -487,8 +980,13 @@ test('selection resets and delayed mutation continuations cannot restore stale U
       return route.fulfill({ response });
     });
     await page.getByLabel('標題').fill('較早 A 寫入');
+    const olderMutationOperationBaseline = await operationStartedCount(page, 'mutate-inquiry');
     await page.getByRole('button', { name: '儲存詢價' }).click();
     await olderMutationReachedServer.promise;
+    const olderMutationOperationId = await waitForOperationStarted(page, {
+      name: 'mutate-inquiry',
+      after: olderMutationOperationBaseline,
+    });
     await page.getByRole('button', { name: /後續詢價 B/ }).click();
 
     const retryKeys = [];
@@ -498,17 +996,25 @@ test('selection resets and delayed mutation continuations cannot restore stale U
       return fulfillPilotJson(route, { error: 'synthetic_retry' }, { status: 500 });
     });
     await page.getByLabel('標題').fill('B 冪等重送');
-    const firstRetryBaseline = await fetchCompletionCount(page, { urlIncludes: '/api/inquiries/continuation-inquiry-b', method: 'PATCH' });
+    const firstRetryOperationBaseline = await operationStartedCount(page, 'mutate-inquiry');
     await page.getByRole('button', { name: '儲存詢價' }).click();
-    await waitForFetchCompletion(page, { urlIncludes: '/api/inquiries/continuation-inquiry-b', method: 'PATCH', after: firstRetryBaseline });
+    const firstRetryOperationId = await waitForOperationStarted(page, {
+      name: 'mutate-inquiry',
+      after: firstRetryOperationBaseline,
+    });
+    await waitForOperationSettled(page, firstRetryOperationId);
     await expect(page.locator('#inquiry-status')).toContainText('synthetic_retry');
 
-    const olderMutationBaseline = await fetchCompletionCount(page, { urlIncludes: '/api/inquiries/continuation-inquiry-a', method: 'PATCH' });
     releaseOlderMutation.resolve();
-    await waitForFetchCompletion(page, { urlIncludes: '/api/inquiries/continuation-inquiry-a', method: 'PATCH', after: olderMutationBaseline });
-    const secondRetryBaseline = await fetchCompletionCount(page, { urlIncludes: '/api/inquiries/continuation-inquiry-b', method: 'PATCH' });
+    await waitForOperationSettled(page, olderMutationOperationId);
+    await expect(page.locator('#inquiry-status')).toContainText('synthetic_retry');
+    const secondRetryOperationBaseline = await operationStartedCount(page, 'mutate-inquiry');
     await page.getByRole('button', { name: '儲存詢價' }).click();
-    await waitForFetchCompletion(page, { urlIncludes: '/api/inquiries/continuation-inquiry-b', method: 'PATCH', after: secondRetryBaseline });
+    const secondRetryOperationId = await waitForOperationStarted(page, {
+      name: 'mutate-inquiry',
+      after: secondRetryOperationBaseline,
+    });
+    await waitForOperationSettled(page, secondRetryOperationId);
     expect(retryKeys).toHaveLength(2);
     expect(retryKeys[1]).toBe(retryKeys[0]);
     await page.unroute('**/api/inquiries/continuation-inquiry-a');
@@ -536,19 +1042,31 @@ test('selection resets and delayed mutation continuations cannot restore stale U
       await releaseLogout.promise;
       return route.continue();
     });
+    const logoutMutationOperationBaseline = await operationStartedCount(page, 'mutate-inquiry');
     await page.getByRole('button', { name: '儲存詢價' }).click();
     await logoutMutationReachedServer.promise;
-    await page.getByRole('button', { name: '登出' }).click();
+    const logoutMutationOperationId = await waitForOperationStarted(page, {
+      name: 'mutate-inquiry',
+      after: logoutMutationOperationBaseline,
+    });
+    const reloaded = page.waitForNavigation({ waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: '登出' }).dispatchEvent('click');
     await logoutStarted.promise;
+    await expect(page.locator('#customer-status')).toHaveText('');
+    await expect(page.locator('#inquiry-status')).toHaveText('');
+    await expect(page.locator('#item-status')).toHaveText('');
     await expect(page.getByLabel('標題')).toHaveValue('');
-    const logoutMutationBaseline = await fetchCompletionCount(page, { urlIncludes: '/api/inquiries/continuation-inquiry-a', method: 'PATCH' });
     releaseLogoutMutation.resolve();
-    await waitForFetchCompletion(page, { urlIncludes: '/api/inquiries/continuation-inquiry-a', method: 'PATCH', after: logoutMutationBaseline });
+    await waitForOperationSettled(page, logoutMutationOperationId);
+    await expect(page.locator('#customer-status')).toHaveText('');
+    await expect(page.locator('#inquiry-status')).toHaveText('');
+    await expect(page.locator('#item-status')).toHaveText('');
     await expect(page.getByLabel('標題')).toHaveValue('');
     await expect(page.locator('#customer-list')).toBeEmpty();
     await expect(page.locator('#inquiry-list')).toBeEmpty();
     await expect(page.locator('#item-list')).toBeEmpty();
     releaseLogout.resolve();
+    await reloaded;
     await expect(page.locator('#login-panel')).toBeVisible();
 
     expect(expectedHttpErrors).toBe(2);
