@@ -81,16 +81,17 @@ class CredentialManager {
  * Simple in-memory implementation
  */
 class RateLimiter {
-  constructor(maxAttempts = 5, windowMs = 15 * 60 * 1000, maxEntries = 1000) {
+  constructor(maxAttempts = 5, windowMs = 15 * 60 * 1000, maxEntries = 1000, now = () => Date.now()) {
     this.maxAttempts = maxAttempts;
     this.windowMs = windowMs;
     this.maxEntries = maxEntries;
+    this.now = now;
     // Map<ip, { attempts, resetTime }>
     this.attempts = new Map();
   }
 
   isLimited(ip) {
-    const now = Date.now();
+    const now = this.now();
     this.cleanupExpired(now);
     const record = this.attempts.get(ip);
 
@@ -106,12 +107,20 @@ class RateLimiter {
     return record.attempts > this.maxAttempts;
   }
 
-  cleanupExpired(now = Date.now()) {
+  cleanupExpired(now = this.now()) {
     for (const [ip, record] of this.attempts) {
       if (now >= record.resetTime) {
         this.attempts.delete(ip);
       }
     }
+  }
+
+  isBlocked(key) {
+    const now = this.now();
+    this.cleanupExpired(now);
+    const record = this.attempts.get(key);
+    if (record) return record.attempts >= this.maxAttempts;
+    return this.attempts.size >= this.maxEntries;
   }
 
   reset(ip) {
@@ -124,12 +133,22 @@ class RateLimiter {
  */
 export class HttpServer {
   constructor(options = {}) {
-    this.sessionStore = createSessionStore();
-    this.credentialManager = new CredentialManager(options.credentials || {});
+    this.sessionStore = options.sessionStore || createSessionStore();
+    this.credentialManager = options.authenticator || new CredentialManager(options.credentials || {});
+    this.sessionValidator = options.sessionValidator || null;
+    this.secureCookies = options.secureCookies === true;
+    this.createNetworkServer = options.createNetworkServer || ((handler) => createServer(handler));
     this.rateLimiter = new RateLimiter(
       options.maxLoginAttempts || 5,
       options.rateLimitWindowMs || 15 * 60 * 1000,
       options.maxRateLimitEntries || 1000,
+      options.rateLimitNow || (() => Date.now()),
+    );
+    this.loginFailureLimiter = new RateLimiter(
+      options.maxLoginAttempts || 5,
+      options.rateLimitWindowMs || 15 * 60 * 1000,
+      options.maxRateLimitEntries || 1000,
+      options.rateLimitNow || (() => Date.now()),
     );
     this.server = null;
     this.port = options.port ?? 8080;
@@ -141,8 +160,7 @@ export class HttpServer {
         customers: createCustomerRepository(options.db),
         inquiries: createInquiryRepository(options.db),
         getSession: (req) => {
-          const token = this.getSessionToken(req);
-          return token ? this.sessionStore.get(token) : null;
+          return this.getSession(req);
         },
         parseJsonBody: (req) => this.parseJsonBody(req),
       })
@@ -151,8 +169,7 @@ export class HttpServer {
       ? createProductCategoryApi({
         categories: createProductCategoryRepository(options.db),
         getSession: (req) => {
-          const token = this.getSessionToken(req);
-          return token ? this.sessionStore.get(token) : null;
+          return this.getSession(req);
         },
         parseJsonBody: (req) => this.parseJsonBody(req),
       })
@@ -166,8 +183,7 @@ export class HttpServer {
         projections: createQuotationProjection({ quotations, costs, approvals }),
         approvals,
         getSession: (req) => {
-          const token = this.getSessionToken(req);
-          return token ? this.sessionStore.get(token) : null;
+          return this.getSession(req);
         },
         parseJsonBody: (req) => this.parseJsonBody(req),
       });
@@ -243,7 +259,8 @@ export class HttpServer {
    */
   setSessionCookie(res, token, expiresAt) {
     const maxAge = Math.floor((expiresAt - Date.now()) / 1000);
-    const cookie = `bk_dashboard_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}`;
+    const secure = this.secureCookies ? '; Secure' : '';
+    const cookie = `bk_dashboard_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure}`;
     res.setHeader('Set-Cookie', cookie);
   }
 
@@ -251,7 +268,8 @@ export class HttpServer {
    * Clear session cookie
    */
   clearSessionCookie(res) {
-    res.setHeader('Set-Cookie', 'bk_dashboard_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0');
+    const secure = this.secureCookies ? '; Secure' : '';
+    res.setHeader('Set-Cookie', `bk_dashboard_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`);
   }
 
   /**
@@ -261,6 +279,23 @@ export class HttpServer {
     const cookie = req.headers.cookie || '';
     const match = cookie.match(/bk_dashboard_session=([^;]+)/);
     return match ? match[1] : null;
+  }
+
+  getSession(req) {
+    const token = this.getSessionToken(req);
+    if (!token) return null;
+    const session = this.sessionStore.get(token);
+    if (!session) return null;
+    try {
+      if (this.sessionValidator && this.sessionValidator(session) !== true) {
+        this.sessionStore.delete(token);
+        return null;
+      }
+      return session;
+    } catch {
+      this.sessionStore.delete(token);
+      return null;
+    }
   }
 
   /**
@@ -291,7 +326,7 @@ export class HttpServer {
       const clientIp = this.getClientIp(req);
 
       // Rate limiting
-      if (this.rateLimiter.isLimited(clientIp)) {
+      if (this.rateLimiter.isLimited(clientIp) || this.loginFailureLimiter.isBlocked(clientIp)) {
         res.writeHead(429, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Too many login attempts' }));
         return;
@@ -301,6 +336,7 @@ export class HttpServer {
       const { username, password } = body;
 
       if (!username || !password) {
+        this.loginFailureLimiter.isLimited(clientIp);
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Invalid credentials' }));
         return;
@@ -311,6 +347,7 @@ export class HttpServer {
 
       const actor = await this.credentialManager.authenticate(username, password);
       if (!actor) {
+        this.loginFailureLimiter.isLimited(clientIp);
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(genericError));
         return;
@@ -321,12 +358,15 @@ export class HttpServer {
       const expiresAt = Date.now() + this.sessionExpiry;
 
       // Store session (token is hashed in session store)
-      this.sessionStore.create(token, actor.actorId, actor.role, expiresAt);
+      this.sessionStore.create(token, actor.actorId, actor.role, expiresAt, {
+        sessionEpoch: actor.sessionEpoch,
+      });
 
       // Set cookie
       this.setSessionCookie(res, token, expiresAt);
 
-      // Reset rate limit on successful login
+      // A successful account login may reset the general attempt burst, but it
+      // must not clear the shared-IP history of failed login attempts.
       this.rateLimiter.reset(clientIp);
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -356,7 +396,7 @@ export class HttpServer {
         return;
       }
 
-      const session = this.sessionStore.get(token);
+      const session = this.getSession(req);
       if (!session) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Unauthorized' }));
@@ -392,7 +432,7 @@ export class HttpServer {
         return;
       }
 
-      const session = this.sessionStore.get(token);
+      const session = this.getSession(req);
       if (!session) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Unauthorized' }));
@@ -462,7 +502,7 @@ export class HttpServer {
    */
   listen() {
     return new Promise((resolve, reject) => {
-      this.server = createServer((req, res) => {
+      this.server = this.createNetworkServer((req, res) => {
         this.route(req, res).catch((err) => {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Internal Server Error' }));

@@ -130,21 +130,22 @@ async function login(baseUrl, username) {
   return response.headers.get('set-cookie').match(/bk_dashboard_session=([^;]+)/)[1];
 }
 
-test('C0-B migration - version 3 is contiguous, repeat migration is a no-op, and approval records are immutable', () => {
+test('C0-B migration remains intact through version 4 and approval records stay immutable', () => {
   const db = openPhase2bDatabase(':memory:');
   try {
-    assert.equal(getSchemaVersion(db), '3');
+    assert.equal(getSchemaVersion(db), '4');
     assert.deepEqual(
       db.prepare('SELECT version, name FROM schema_migrations ORDER BY version').all().map((row) => ({ ...row })),
       [
         { version: 1, name: 'phase2b-initial-schema' },
         { version: 2, name: 'product-category-foundation' },
         { version: 3, name: 'approver-projection-foundation' },
+        { version: 4, name: 'lan-write-pilot-foundation' },
       ],
     );
     const firstLedger = db.prepare('SELECT * FROM schema_migrations ORDER BY version').all();
     let clockCalls = 0;
-    assert.equal(migrateDatabase(db, { now: () => { clockCalls += 1; return LATER; } }), '3');
+    assert.equal(migrateDatabase(db, { now: () => { clockCalls += 1; return LATER; } }), '4');
     assert.equal(clockCalls, 0);
     assert.deepEqual(db.prepare('SELECT * FROM schema_migrations ORDER BY version').all(), firstLedger);
 
@@ -225,7 +226,7 @@ test('C0-B approval immutability - first inserts work and every replacement path
         assertPreserved(label);
       }
     }
-    assert.equal(migrateDatabase(db, { now: () => { throw new Error('rerun must not write'); } }), '3');
+    assert.equal(migrateDatabase(db, { now: () => { throw new Error('rerun must not write'); } }), '4');
     assertPreserved('rerun');
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
   } finally {

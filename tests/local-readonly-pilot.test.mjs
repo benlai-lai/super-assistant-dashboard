@@ -116,12 +116,12 @@ function snapshot(db) {
   };
 }
 
-test('creates a validated in-memory migrations 1-3 database with the exact related seed', { timeout: 10_000 }, async () => {
+test('creates a validated in-memory migrations 1-4 database with the exact related seed', { timeout: 10_000 }, async () => {
   await withPilot(async (pilot) => {
-    assert.equal(getSchemaVersion(pilot.db), '3');
+    assert.equal(getSchemaVersion(pilot.db), '4');
     assert.deepEqual(
       pilot.db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map(({ version }) => version),
-      [1, 2, 3],
+      [1, 2, 3, 4],
     );
     assert.equal(pilot.db.prepare('PRAGMA database_list').all()[0].file, '');
     assert.equal(pilot.db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1);
@@ -131,7 +131,7 @@ test('creates a validated in-memory migrations 1-3 database with the exact relat
       items: 3,
       migrations: pilot.seed.migrations,
     });
-    assert.equal(pilot.seed.migrations.length, 3);
+    assert.equal(pilot.seed.migrations.length, 4);
     assert.deepEqual(pilot.db.prepare('PRAGMA foreign_key_check').all(), []);
     const data = snapshot(pilot.db);
     assert.deepEqual(data.customers.map(({ id }) => id), ['pilot-customer-empty', 'pilot-customer-one']);

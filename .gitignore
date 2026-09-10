@@ -1,0 +1,16 @@
+node_modules/
+test-results/
+playwright-report/
+.dashboard-local/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.pfx
+*.pem
+*.p12
+*.key
+.env
+.env.*

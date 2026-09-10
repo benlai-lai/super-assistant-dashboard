@@ -1,11 +1,18 @@
 import { DatabaseSync } from 'node:sqlite';
 import { migrateDatabase } from './migrations/index.mjs';
 
-export function openPhase2bDatabase(filename = ':memory:', migrationOptions = {}) {
+export function openPhase2bDatabase(filename = ':memory:', migrationOptions = {}, connectionOptions = {}) {
   let db;
   try {
-    db = new DatabaseSync(filename);
+    db = new DatabaseSync(filename, { timeout: connectionOptions.timeoutMs ?? 5000 });
     db.exec('PRAGMA foreign_keys = ON');
+    db.exec('PRAGMA recursive_triggers = ON');
+    db.exec(`PRAGMA busy_timeout = ${Number.isInteger(connectionOptions.timeoutMs) ? connectionOptions.timeoutMs : 5000}`);
+    if (filename !== ':memory:' && connectionOptions.journalMode !== 'delete') {
+      const mode = db.prepare('PRAGMA journal_mode = WAL').get()?.journal_mode;
+      if (String(mode).toLowerCase() !== 'wal') throw new Error('SQLite WAL mode could not be enabled');
+      db.exec('PRAGMA synchronous = FULL');
+    }
     const foreignKeys = db.prepare('PRAGMA foreign_keys').get();
     if (foreignKeys.foreign_keys !== 1) {
       throw new Error('SQLite foreign_keys could not be enabled');

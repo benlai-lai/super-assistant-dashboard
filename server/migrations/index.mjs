@@ -27,6 +27,11 @@ const REGISTRY = Object.freeze([
     name: 'approver-projection-foundation',
     sqlUrl: new URL('./003-approver-projection-foundation.sql', import.meta.url),
   }),
+  Object.freeze({
+    version: 4,
+    name: 'lan-write-pilot-foundation',
+    sqlUrl: new URL('./004-lan-write-pilot.sql', import.meta.url),
+  }),
 ]);
 
 function checksum(sql) {
@@ -283,6 +288,20 @@ function applyMigration(db, migration, appliedAt) {
 
 export function loadRegisteredMigrations() {
   return materializeMigrations(REGISTRY);
+}
+
+export function validateRegisteredDatabase(db, { requireLatest = true } = {}) {
+  if (!db || typeof db.prepare !== 'function') throw new Error('A SQLite database is required');
+  const migrations = materializeMigrations(REGISTRY);
+  const current = validateAppliedState(db, migrations);
+  const latest = migrations.at(-1).version;
+  if (requireLatest && current !== latest) {
+    throw new Error('Database schema version is not the latest registered version');
+  }
+  return {
+    schemaVersion: String(current),
+    migrations: migrations.slice(0, current).map(({ version, name, checksum }) => ({ version, name, checksum })),
+  };
 }
 
 export function migrateDatabase(db, { migrations: suppliedMigrations, now = () => new Date().toISOString() } = {}) {

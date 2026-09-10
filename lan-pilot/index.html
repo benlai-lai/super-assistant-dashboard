@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard LAN Write Pilot｜Phase A</title>
+  <link rel="stylesheet" href="./lan-pilot.css">
+</head>
+<body data-pilot-runtime="static">
+  <header>
+    <div><p class="eyebrow">PHASE A · LOOPBACK</p><h1>客戶與詢價協作試用</h1></div>
+    <div id="session-panel" hidden><span id="session-summary"></span><button id="logout" type="button">登出</button></div>
+  </header>
+  <main>
+    <section id="login-panel" class="card narrow">
+      <h2>登入測試帳號</h2>
+      <div id="login-controls">
+        <label>帳號<input id="username" autocomplete="username" required disabled></label>
+        <label>密碼<input id="password" type="password" autocomplete="current-password" required disabled></label>
+        <button id="login-button" type="button" disabled>登入</button>
+      </div>
+      <p id="login-status" class="status" role="status">正在確認核准的本機服務…</p>
+    </section>
+
+    <section id="app-panel" hidden>
+      <p class="notice">本入口僅供 Phase A 合成資料測試；沒有刪除、報價、核准、PDF、附件或 LINE 功能。</p>
+      <div class="columns">
+        <section class="card">
+          <div class="heading"><h2>客戶</h2><button id="new-customer" type="button">新增模式</button></div>
+          <ul id="customer-list" class="record-list" data-testid="customer-list"></ul>
+          <form id="customer-form">
+            <input id="customer-id" type="hidden"><input id="customer-version" type="hidden">
+            <label>名稱<input id="customer-name" maxlength="120" required></label>
+            <label>聯絡人<input id="customer-contact" maxlength="120"></label>
+            <label>Email<input id="customer-email" type="email" maxlength="254"></label>
+            <label>電話<input id="customer-phone" maxlength="120"></label>
+            <button type="submit">儲存客戶</button>
+          </form>
+          <p id="customer-status" class="status" role="status"></p>
+        </section>
+
+        <section class="card">
+          <div class="heading"><h2>詢價</h2><button id="new-inquiry" type="button">新增模式</button></div>
+          <p id="selected-customer">請先選擇客戶</p>
+          <ul id="inquiry-list" class="record-list" data-testid="inquiry-list"></ul>
+          <form id="inquiry-form">
+            <input id="inquiry-id" type="hidden"><input id="inquiry-version" type="hidden">
+            <label>標題<input id="inquiry-title" maxlength="200" required></label>
+            <label>狀態<select id="inquiry-state"><option value="draft">draft</option><option value="active">active</option><option value="closed">closed</option><option value="cancelled">cancelled</option></select></label>
+            <button type="submit">儲存詢價</button>
+          </form>
+          <p id="inquiry-status" class="status" role="status"></p>
+        </section>
+
+        <section class="card">
+          <div class="heading"><h2>詢價品項</h2><button id="new-item" type="button">新增模式</button></div>
+          <p id="selected-inquiry">請先選擇詢價</p>
+          <ul id="item-list" class="record-list" data-testid="item-list"></ul>
+          <form id="item-form">
+            <input id="item-id" type="hidden"><input id="item-version" type="hidden">
+            <label>說明<input id="item-description" maxlength="500" required></label>
+            <label>數量<input id="item-quantity" type="number" min="1" step="1" required></label>
+            <label>備註<textarea id="item-notes" maxlength="2000"></textarea></label>
+            <button type="submit">儲存品項</button>
+          </form>
+          <p id="item-status" class="status" role="status"></p>
+        </section>
+      </div>
+
+      <section class="card"><h2>修改紀錄</h2><ul id="audit-list" class="audit-list" data-testid="audit-list"></ul><p id="audit-status" class="status" role="status"></p></section>
+    </section>
+  </main>
+  <script src="./lan-pilot.js"></script>
+</body>
+</html>

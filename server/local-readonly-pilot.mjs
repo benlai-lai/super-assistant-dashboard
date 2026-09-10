@@ -156,8 +156,8 @@ function seedPilotDatabase(db) {
   });
 
   const migrations = db.prepare('SELECT version, name FROM schema_migrations ORDER BY version').all();
-  if (JSON.stringify(migrations.map(({ version }) => version)) !== '[1,2,3]') {
-    throw new Error('Pilot database did not reach schema migrations 1-3');
+  if (JSON.stringify(migrations.map(({ version }) => version)) !== '[1,2,3,4]') {
+    throw new Error('Pilot database did not reach schema migrations 1-4');
   }
 
   const counts = Object.freeze({

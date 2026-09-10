@@ -39,19 +39,20 @@ function createVersionOneDatabase(path) {
   return db;
 }
 
-test('C0-A migration - fresh database applies registered versions 1, 2, and 3 and repeat open is a true no-op', () => {
+test('C0-A migration - fresh database applies registered versions 1 through 4 and repeat open is a true no-op', () => {
   withTempDir((dir) => {
     const path = join(dir, 'fresh.sqlite');
     let db;
     try {
       db = openPhase2bDatabase(path);
-      assert.equal(getSchemaVersion(db), '3');
+      assert.equal(getSchemaVersion(db), '4');
       assert.deepEqual(
         db.prepare('SELECT version, name FROM schema_migrations ORDER BY version').all().map((row) => ({ ...row })),
         [
           { version: 1, name: 'phase2b-initial-schema' },
           { version: 2, name: 'product-category-foundation' },
           { version: 3, name: 'approver-projection-foundation' },
+          { version: 4, name: 'lan-write-pilot-foundation' },
         ],
       );
       const firstLedger = db.prepare('SELECT * FROM schema_migrations ORDER BY version').all();
@@ -107,10 +108,22 @@ test('C0-A migration - exact version 1 database is adopted without changing busi
       db = null;
 
       db = openPhase2bDatabase(path);
-      assert.equal(getSchemaVersion(db), '3');
-      assert.deepEqual(db.prepare('SELECT * FROM customers').all(), before.customers);
-      assert.deepEqual(db.prepare('SELECT * FROM inquiries').all(), before.inquiries);
-      assert.deepEqual(db.prepare('SELECT * FROM inquiry_items').all(), before.inquiryItems);
+      assert.equal(getSchemaVersion(db), '4');
+      assert.deepEqual(
+        db.prepare('SELECT id, display_name, contact_name, email, phone, created_at FROM customers').all(),
+        before.customers,
+      );
+      assert.deepEqual(
+        db.prepare('SELECT id, customer_id, title, status, created_at, updated_at FROM inquiries').all(),
+        before.inquiries,
+      );
+      assert.deepEqual(
+        db.prepare('SELECT id, inquiry_id, description, quantity, notes, created_at FROM inquiry_items').all(),
+        before.inquiryItems,
+      );
+      assert.deepEqual({ ...db.prepare('SELECT updated_at, row_version FROM customers').get() }, { updated_at: NOW, row_version: 1 });
+      assert.deepEqual({ ...db.prepare('SELECT row_version FROM inquiries').get() }, { row_version: 1 });
+      assert.deepEqual({ ...db.prepare('SELECT updated_at, row_version FROM inquiry_items').get() }, { updated_at: NOW, row_version: 1 });
       assert.deepEqual(
         db.prepare(`
           SELECT id, inquiry_id, version_number, status, currency,
@@ -157,7 +170,7 @@ test('C0-A migration - injected failing migration rolls back DDL, data, meta, an
     const migrations = [
       ...loadRegisteredMigrations(),
       {
-        version: 4,
+        version: 5,
         name: 'injected-failure',
         sql: `
           CREATE TABLE should_rollback (id TEXT PRIMARY KEY);
@@ -168,10 +181,10 @@ test('C0-A migration - injected failing migration rolls back DDL, data, meta, an
     ];
     assert.throws(() => migrateDatabase(db, { migrations, now: () => NOW }), /missing_table|no such table/i);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE name = 'should_rollback'").get().count, 0);
-    assert.equal(getSchemaVersion(db), '3');
+    assert.equal(getSchemaVersion(db), '4');
     assert.deepEqual(
       db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map((row) => ({ ...row })),
-      [{ version: 1 }, { version: 2 }, { version: 3 }],
+      [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }],
     );
   } finally {
     db.close();
@@ -243,11 +256,11 @@ test('C0-A migration - registry rejects transaction-owning migration SQL before 
   try {
     const migrations = [
       ...loadRegisteredMigrations(),
-      { version: 4, name: 'bad-transaction-owner', sql: 'BEGIN; CREATE TABLE forbidden (id TEXT); COMMIT;' },
+      { version: 5, name: 'bad-transaction-owner', sql: 'BEGIN; CREATE TABLE forbidden (id TEXT); COMMIT;' },
     ];
     assert.throws(() => migrateDatabase(db, { migrations }), /must not control transactions/i);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE name = 'forbidden'").get().count, 0);
-    assert.equal(getSchemaVersion(db), '3');
+    assert.equal(getSchemaVersion(db), '4');
   } finally {
     db.close();
   }
@@ -259,7 +272,7 @@ test('C0-A migration - SQLite END transaction alias is rejected before partial D
     const migrations = [
       ...loadRegisteredMigrations(),
       {
-        version: 4,
+        version: 5,
         name: 'end-alias-escape',
         sql: `
           CREATE TABLE end_alias_partial (id TEXT PRIMARY KEY);
@@ -270,8 +283,8 @@ test('C0-A migration - SQLite END transaction alias is rejected before partial D
     ];
     assert.throws(() => migrateDatabase(db, { migrations, now: () => NOW }), /must not control transactions/i);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE name = 'end_alias_partial'").get().count, 0);
-    assert.equal(getSchemaVersion(db), '3');
-    assert.equal(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 3);
+    assert.equal(getSchemaVersion(db), '4');
+    assert.equal(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 4);
   } finally {
     db.close();
   }
@@ -298,16 +311,16 @@ test('C0-A migration - trigger BEGIN and END preserve immutability, CASE express
   try {
     const migrations = [
       ...loadRegisteredMigrations(),
-      { version: 4, name: 'trigger-grammar', sql: TRIGGER_MIGRATION_SQL },
+      { version: 5, name: 'trigger-grammar', sql: TRIGGER_MIGRATION_SQL },
     ];
-    assert.equal(migrateDatabase(db, { migrations, now: () => NOW }), '4');
+    assert.equal(migrateDatabase(db, { migrations, now: () => NOW }), '5');
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'trigger' AND tbl_name = 'trigger_guard'").get().count, 2);
     db.prepare('INSERT INTO trigger_guard (id, value) VALUES (?, ?)').run(1, 'original');
     assert.throws(() => db.prepare('UPDATE trigger_guard SET value = ? WHERE id = ?').run('changed', 1), /immutable/);
     assert.throws(() => db.prepare('DELETE FROM trigger_guard WHERE id = ?').run(1), /immutable delete/);
     assert.equal(db.prepare('SELECT value FROM trigger_guard WHERE id = ?').get(1).value, 'original');
     const ledger = db.prepare('SELECT * FROM schema_migrations ORDER BY version').all();
-    assert.equal(migrateDatabase(db, { migrations, now: () => { throw new Error('rerun must not write'); } }), '4');
+    assert.equal(migrateDatabase(db, { migrations, now: () => { throw new Error('rerun must not write'); } }), '5');
     assert.deepEqual(db.prepare('SELECT * FROM schema_migrations ORDER BY version').all(), ledger);
     assert.equal(db.isTransaction, false);
   } finally {
@@ -332,7 +345,7 @@ test('C0-A migration - every top-level transaction command is rejected before wr
         const migrations = [
           ...loadRegisteredMigrations(),
           {
-            version: 4,
+            version: 5,
             name: 'blocked-transaction',
             sql: `${prefix}
               CREATE TABLE forbidden (id TEXT);
@@ -360,7 +373,7 @@ test('C0-A migration - trigger DDL and following data roll back together on migr
     const migrations = [
       ...loadRegisteredMigrations(),
       {
-        version: 4,
+        version: 5,
         name: 'trigger-rollback',
         sql: `${TRIGGER_MIGRATION_SQL}
           INSERT INTO trigger_guard (id, value) VALUES (1, 'partial');
@@ -370,7 +383,7 @@ test('C0-A migration - trigger DDL and following data roll back together on migr
     ];
     assert.throws(() => migrateDatabase(db, { migrations, now: () => NOW }), /missing_table|no such table/i);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE name = 'trigger_guard' OR tbl_name = 'trigger_guard'").get().count, 0);
-    assert.equal(getSchemaVersion(db), '3');
+    assert.equal(getSchemaVersion(db), '4');
     assert.deepEqual(db.prepare('SELECT * FROM schema_migrations ORDER BY version').all(), ledger);
     assert.equal(db.isTransaction, false);
   } finally {

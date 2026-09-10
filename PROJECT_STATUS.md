@@ -1,6 +1,6 @@
 # Dashboard Project Status
 
-- 更新日期：2026-09-06
+- 更新日期：2026-09-09
 - 唯一正式 Repository：`C:\Users\taich\Documents\GitHub\super-assistant-dashboard`
 - 已驗證程式基準：`main` / `a4d2bb83eb5d8914d0c68934e0f34dce8e9db226`
 - 已驗證程式 tree：`bb0bae5e50b2e7b572634322dbd366819b4cd5ce`；以下自動化證據不等同本基準的人工驗收。
@@ -14,6 +14,15 @@
 - V2 文件將方向擴展為 Workspace 協作平台；完整多人產品核准狀態仍為 `UNKNOWN`。
 - Pages 已公開靜態 Prototype；正式 Node 後端、正式資料庫及正式多人環境尚未啟用。
 
+## LAN write pilot Phase A（隔離施工中）
+
+- `codex/dashboard-lan-write-pilot-phase-a` 以 `main` / `16377195e52dfb0ceb588a5ec4b4c88b3cc8de3b` 為基準，Phase A 實作已建立 PR #25；本次安全修正已有尚未 push 的本機 commit，PR 尚未設為 Ready、merge 或部署。
+- 隔離測試根目錄位於 Git、Pages 與 OneDrive 外；已建立 schema v4 的持久化合成 SQLite DB、3 個 editor 帳號，以及 customer／inquiry／`inquiry_items` 合成資料。帳號停用與密碼重設會在下一個受保護請求使既有 session 失效。
+- 已實作 loopback-only 明文測試入口、共享讀寫 UI、If-Match 衝突、冪等收據、append-only audit、WAL-aware backup 與 offline restore；未開放刪除、報價、核准、PDF、附件或 LINE。
+- 目前 170 項 Node tests、69 個 JavaScript syntax checks、含新 UI 的隔離 build、npm audit（0 vulnerabilities）、4 項 Chromium Playwright 流程及實際 backup／restore rehearsal 通過。三個 browser context 只是單機隔離 session，不是三台實體電腦驗收。
+- 已從 Eclipse Adoptium 官方發行來源下載並以官方 SHA-256 核對可攜式 Temurin JRE 21.0.12.1，解壓於 Git／Pages／OneDrive 外的 Phase A 專用 tools 目錄，未修改全域 PATH。ZAP 2.17.0 Crossplatform 與 Core ZIP 均已從官方 GitHub Release 完整下載，但兩者在本機 checksum 階段都被 Windows Defender 判定為 `Program:Java/Multiverze!rfn`（Threat ID 453479、高嚴重性）並成功隔離；未停用防護、未加入排除，也未解壓或執行該批資產。其後已使用泰吉電腦既有的 ZAP 2.17.0 與 OpenJDK 17.0.20.1，對最新本機安全修正執行固定 8-request、anonymous、passive-only 計畫：8 個 request／8 個 URL、passive queue drained、High／Medium／Low 為 0、Info 1、外部請求 0，清理通過。此結果仍不得解讀為完整認證、主動掃描、TLS 或正式 LAN 安全驗收。
+- Phase B 尚未執行：未核對或修改 LAN 網卡／profile／固定 hostname、Windows Firewall、主機憑證、客戶端信任或 Windows service，也未進行跨實體電腦測試。
+
 ## 已完成並可由程式確認
 
 - V1：總覽、日曆、任務、專案、Inbox、快速新增、任務狀態／完成／封存及 V1 `localStorage` 保存。
@@ -24,7 +33,7 @@
 - 資料邊界：Memory／LocalStorage repository、V2 獨立 storage key、fallback、state validation 與 fixed clock 測試邊界。
 - V1 migration preview：只預覽可遷移 Task，不會正式匯入或刪除 V1 資料。
 - V2 storage schema 已升到 version 2：新增 `orders` 陣列與 Task `orderId` 相容欄位；目前只有資料格式，沒有訂單履約操作畫面或流程。
-- 本機後端基礎：Node HTTP 登入／session、editor／viewer／approver 權限控制、SQLite repository 與版本 1–3 migrations、Customer／Inquiry、品類及報價 API；Inquiry JSON export 已有受政策控制的 service，尚無 UI／HTTP 入口。
+- 本機後端基礎：Node HTTP 登入／session、editor／viewer／approver 權限控制、SQLite repository 與版本 1–4 migrations、Customer／Inquiry、品類及報價 API；Inquiry JSON export 已有受政策控制的 service，尚無 UI／HTTP 入口。
 - C0-B：approver 核准／退回、禁止自行核准、不可變更的核准紀錄，以及內部／客戶欄位白名單投影；`costSummary` 僅限內部投影。
 - ReDoS：PR #22 已合併；CSS `url()`／`@import` 抽取改用預先計算與有界解析，保留既有抽取及 validator 行為。
 
@@ -74,7 +83,7 @@
 
 ## 下一個決策點
 
-C0-B 已合併並完成上述有限驗收與 Pages 發布核對。下一階段尚未授權；本次僅更新結案狀態，不自動開始新功能、串接 UI／正式後端、建立正式資料庫、執行正式 migration、覆蓋 V1 資料或擴大訂單功能。本次文件的 commit／發布亦須另行授權。
+C0-B 已合併並完成上述有限驗收與 Pages 發布核對。LAN write pilot Phase A 已在隔離分支完成本機實作、安全修正 commit、真實 Playwright／Chromium 驗證與固定 8-request ZAP 2.17.0 passive-only 驗收；安全修正尚未 push，PR #25 仍不得設為 Ready、merge 或部署。下一個人類決定是是否授權將精確本機安全修正 commit 一般 push 至 PR #25 並重新核對遠端 CI／CodeQL；Phase B、正式環境、V1 資料覆蓋、訂單擴充及任何部署仍未授權。
 
 ## 詳細資料按需閱讀
 

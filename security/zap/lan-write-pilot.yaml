@@ -1,0 +1,65 @@
+env:
+  contexts:
+    - name: phase-a-loopback
+      urls:
+        - ${DASHBOARD_ZAP_BASE_URL}
+      includePaths:
+        - ${DASHBOARD_ZAP_BASE_URL}/lan-pilot/.*
+        - ${DASHBOARD_ZAP_BASE_URL}/api/health
+        - ${DASHBOARD_ZAP_BASE_URL}/api/session
+        - ${DASHBOARD_ZAP_BASE_URL}/api/customers.*
+        - ${DASHBOARD_ZAP_BASE_URL}/api/inquiries.*
+      excludePaths:
+        - .*logout.*
+  parameters:
+    failOnError: true
+    failOnWarning: true
+    progressToStdout: true
+jobs:
+  - type: requestor
+    parameters:
+      user: null
+    requests:
+      - url: ${DASHBOARD_ZAP_BASE_URL}/lan-pilot/
+        method: GET
+      - url: ${DASHBOARD_ZAP_BASE_URL}/lan-pilot/lan-pilot.css
+        method: GET
+      - url: ${DASHBOARD_ZAP_BASE_URL}/lan-pilot/lan-pilot.js
+        method: GET
+      - url: ${DASHBOARD_ZAP_BASE_URL}/api/health
+        method: GET
+      - url: ${DASHBOARD_ZAP_BASE_URL}/api/session
+        method: GET
+      - url: ${DASHBOARD_ZAP_BASE_URL}/api/customers
+        method: GET
+      - url: ${DASHBOARD_ZAP_BASE_URL}/api/inquiries
+        method: GET
+      - url: ${DASHBOARD_ZAP_BASE_URL}/api/inquiries/synthetic-missing/items
+        method: GET
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 2
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: ${DASHBOARD_ZAP_REPORT_DIR}
+      reportFile: lan-write-pilot-passive
+      reportTitle: Dashboard LAN Write Pilot Phase A passive report
+      reportDescription: Anonymous fixed-request passive-only validation
+      displayReport: false
+    risks:
+      - high
+      - medium
+      - low
+      - info
+    confidences:
+      - high
+      - medium
+      - low
+      - falsepositive
+  - type: exitStatus
+    parameters:
+      errorLevel: Medium
+      okExitValue: 0
+      errorExitValue: 1
+      warnExitValue: 2
