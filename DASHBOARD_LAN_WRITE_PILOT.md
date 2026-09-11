@@ -69,3 +69,39 @@ The static `lan-pilot/` files may be visible through GitHub Pages, but they are 
 ## Phase B remains unexecuted
 
 Before LAN use, an operator must separately confirm the Windows and Node versions, network profile and adapter, stable hostname/address, port availability, service/data/backup directory ACLs, certificate tooling, and client trust distribution. Phase B requires HTTPS, a narrowly scoped Windows Firewall rule, real cross-device testing on at least two physical client computers, documented certificate removal, firewall rollback, listener/service shutdown, and backup-restore rehearsal. None of those host or client changes are made by Phase A.
+
+## Phase B HTTPS launcher (code preparation only)
+
+Temporary trial host: `LAPTOP-BFIEIE3U`. This is not a production placement decision.
+Planned URL: `https://192.168.1.101:8443/lan-pilot/`. The second physical client is not yet designated; it does not block code preparation. Host configuration, certificate issuance/trust, firewall changes and LAN startup require separate authorization.
+
+The dedicated launcher accepts an explicit IPv4 bind address assigned to this host. It rejects wildcard, multicast, hostnames, IPv6 and unassigned addresses. Port defaults to 8443; an explicit port must be 1–65535 (no ephemeral port 0). It does not auto-discover or select a LAN interface.
+
+All five paths (`--data-root`, `--db`, `--tls-root`, `--cert`, `--key`) must be explicit absolute local paths. Existing dedicated roots and files must be outside Git and OneDrive/configured sync roots, with no symlink/junction/reparse components. Volume roots, UNC/device paths, traversal and alternate streams are rejected. TLS files and DB must be distinct regular files, not hard links. The database must already exist: this launcher does not seed accounts or create a new pilot database. Existing database migrations remain the underlying pilot behavior, so use only a separately approved synthetic schema-v4 database and its backup. Check private-key, data and backup ACLs during the later host-configuration gate; this launcher does not change ACLs.
+
+TLS is mandatory. Before opening the DB, the launcher checks readable certificate/private-key files, certificate validity dates, IP SAN matching the bind address, key pairing and a TLS context with minimum TLS 1.2. Encrypted private keys are unsupported; no passphrase argument is accepted. Issuer/client trust is a separate client-configuration check. The launcher logs only lifecycle states and the endpoint, never raw exceptions, passwords or TLS material. It neither creates certificates nor modifies certificate stores.
+
+After separate host-configuration and LAN-start authorization, use this command template with the approved existing synthetic DB and certificate paths (do not execute during code preparation):
+
+```powershell
+node scripts/start-lan-pilot-https.mjs --host 192.168.1.101 --port 8443 --data-root 'C:\DashboardPhaseB\data' --db 'C:\DashboardPhaseB\data\pilot.sqlite3' --tls-root 'C:\DashboardPhaseB\tls' --cert 'C:\DashboardPhaseB\tls\server.pem' --key 'C:\DashboardPhaseB\tls\server.key'
+```
+
+Expected output: `phase_b=STARTING`, `phase_b=RUNNING`, and the exact HTTPS URL. `phase_b=FAILED` means startup was refused; do not bypass validation or switch to HTTP. Inspect the explicit arguments, approved path metadata, certificate dates/SAN and local address without printing secrets. The existing Phase A response header/runtime marker is retained for compatibility with the shared UI; transport is HTTPS and session cookies are Secure.
+
+Stop with Ctrl+C (SIGINT), or SIGTERM where supported. Output becomes `STOPPING`, then `STOPPED` after listener and DB closure. Concurrent stop requests share one shutdown. Requests may drain for up to five seconds; remaining connections are destroyed so an incomplete TLS handshake cannot hold the port indefinitely. Verify the process exits and the port is no longer listening before backup/restore or restart.
+
+Rollback for this code stage is to leave the launcher stopped and retain the previous checkout; no host configuration was changed. During a later authorized host trial, stop the launcher first, retain the synthetic DB/backup, and separately revoke the exact trial firewall rule and remove only the recorded trial certificate/trust entries under that gate. Do not delete an entire certificate store, change network profiles, remove unrelated ACLs, or fall back to a LAN HTTP listener. No service is installed by this launcher.
+
+Loopback-only verification:
+
+```powershell
+node --test tests/lan-https-launcher.test.mjs
+npm test
+npm run lint
+npm run build
+npm audit --audit-level=high
+git diff --check
+```
+
+Tests require OpenSSL (`openssl` on PATH on Unix; Git for Windows bundled OpenSSL by default; override executable with `DASHBOARD_TEST_OPENSSL`). They generate disposable one-day self-signed loopback test material in a dedicated OS temporary directory and remove it at completion. No test private key is committed or emitted as evidence. Tests never bind to the planned LAN address. Passing these checks establishes launcher code readiness only; host configuration, trusted-client TLS, real cross-device write validation and production readiness remain `UNKNOWN`.
